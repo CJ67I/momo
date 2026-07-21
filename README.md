@@ -21,7 +21,7 @@
 ### 方式 A：扩展管理器（上传 GitHub 后）
 
 1. 打开酒馆 → **扩展** → **安装扩展**
-2. 粘贴仓库地址，例如：`https://github.com/<你的用户名>/st-momo.git`
+2. 粘贴仓库地址：`https://github.com/CJ67I/momo.git`
 3. 分支留空（默认 `main` / `master`）
 4. 安装后刷新页面，点击右侧粉色 **「陌」** 按钮，或扩展设置里的「打开陌陌」
 
@@ -89,7 +89,7 @@ st-momo/
 ### 2. 新建仓库
 
 1. 点击右上角 **+** → **New repository**
-2. Repository name 填：`st-momo`
+2. Repository name 填：`momo`
 3. 选 **Public**
 4. **不要**勾选 “Add a README”（本地已有）
 5. 点击 **Create repository**
@@ -119,8 +119,7 @@ git commit -m "feat: initial SillyTavern Momo-style social extension"
 # 若默认分支是 master，可改名为 main（可选）
 git branch -M main
 
-# 换成你的仓库地址
-git remote add origin https://github.com/<你的用户名>/st-momo.git
+git remote add origin https://github.com/CJ67I/momo.git
 git push -u origin main
 ```
 
@@ -140,7 +139,7 @@ git push -u origin main
 扩展安装地址即为：
 
 ```text
-https://github.com/<你的用户名>/st-momo.git
+https://github.com/CJ67I/momo.git
 ```
 
 ---
