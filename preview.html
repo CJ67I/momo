@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>st-momo 本地预览</title>
+  <link rel="stylesheet" href="./style.css" />
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #111;
+      color: #fff;
+      font-family: "Microsoft YaHei", sans-serif;
+    }
+    .hint {
+      position: fixed;
+      left: 16px;
+      top: 16px;
+      z-index: 1;
+      opacity: .75;
+      font-size: 13px;
+      line-height: 1.5;
+      max-width: 280px;
+    }
+  </style>
+</head>
+<body>
+  <div class="hint">
+    本地预览页（无需酒馆）。<br />
+    正式使用请把整个 <code>st-momo</code> 文件夹装进 SillyTavern 第三方扩展目录。
+  </div>
+  <script type="module">
+    import { MomoApp } from './src/app.js';
+    const app = new MomoApp();
+    app.mount();
+    window.StMomo = app;
+    app.toggle(true);
+  </script>
+</body>
+</html>

@@ -1,0 +1,669 @@
+/* =========================================================
+ * st-momo — 陌陌风格虚拟社交 UI
+ * Brand accent inspired by classic Momo pink, original layout.
+ * ========================================================= */
+
+:root {
+    --mm-pink: #ff2d7b;
+    --mm-pink-deep: #e01863;
+    --mm-pink-soft: #ffe4ef;
+    --mm-ink: #1c1c1e;
+    --mm-muted: #8e8e93;
+    --mm-line: #ececf0;
+    --mm-bg: #f6f6f8;
+    --mm-card: #ffffff;
+    --mm-shadow: 0 18px 50px rgba(28, 28, 30, 0.28);
+    --mm-radius: 18px;
+    --mm-font: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+}
+
+#st-momo-root {
+    font-family: var(--mm-font);
+}
+
+.mm-launcher {
+    position: fixed;
+    right: 18px;
+    bottom: 96px;
+    z-index: 99990;
+    width: 52px;
+    height: 52px;
+    border: 0;
+    border-radius: 50%;
+    background: linear-gradient(160deg, #ff5a9a 0%, var(--mm-pink) 55%, var(--mm-pink-deep) 100%);
+    color: #fff;
+    font-size: 22px;
+    font-weight: 800;
+    box-shadow: 0 10px 28px rgba(255, 45, 123, 0.45);
+    cursor: pointer;
+    transition: transform .18s ease, box-shadow .18s ease;
+}
+
+.mm-launcher:hover {
+    transform: translateY(-2px) scale(1.04);
+}
+
+.mm-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 99995;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background:
+        radial-gradient(1200px 600px at 20% 10%, rgba(255, 90, 154, 0.22), transparent 55%),
+        radial-gradient(900px 500px at 90% 90%, rgba(255, 45, 123, 0.18), transparent 50%),
+        rgba(10, 10, 14, 0.55);
+    opacity: 0;
+    transition: opacity .22s ease;
+    backdrop-filter: blur(4px);
+}
+
+.mm-overlay.is-visible {
+    opacity: 1;
+}
+
+.mm-phone {
+    width: min(390px, calc(100vw - 24px));
+    height: min(780px, calc(100vh - 28px));
+    background: var(--mm-bg);
+    border-radius: 34px;
+    box-shadow: var(--mm-shadow);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    transform: translateY(12px) scale(.98);
+    transition: transform .22s ease;
+}
+
+.mm-overlay.is-visible .mm-phone {
+    transform: translateY(0) scale(1);
+}
+
+.mm-status {
+    height: 28px;
+    padding: 8px 18px 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--mm-ink);
+    background: var(--mm-card);
+}
+
+.mm-screen {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.mm-page {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--mm-bg);
+}
+
+.mm-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 16px 8px;
+    background: var(--mm-card);
+    border-bottom: 1px solid var(--mm-line);
+}
+
+.mm-brand {
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    background: linear-gradient(90deg, var(--mm-pink-deep), var(--mm-pink));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+
+.mm-icon-btn {
+    width: 34px;
+    height: 34px;
+    border: 0;
+    border-radius: 50%;
+    background: var(--mm-pink-soft);
+    color: var(--mm-pink-deep);
+    font-size: 18px;
+    cursor: pointer;
+}
+
+.mm-subtabs {
+    display: flex;
+    gap: 18px;
+    padding: 10px 16px 0;
+    background: var(--mm-card);
+    color: var(--mm-muted);
+    font-size: 14px;
+}
+
+.mm-subtabs button {
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    padding: 0 0 10px;
+    cursor: pointer;
+    position: relative;
+}
+
+.mm-subtabs .is-active {
+    color: var(--mm-ink);
+    font-weight: 700;
+}
+
+.mm-subtabs .is-active::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 3px;
+    border-radius: 3px;
+    background: var(--mm-pink);
+}
+
+.mm-feed,
+.mm-chat-list,
+.mm-thread,
+.mm-me {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+}
+
+.mm-feed {
+    padding: 14px 12px 18px;
+}
+
+.mm-card {
+    background: var(--mm-card);
+    border-radius: var(--mm-radius);
+    padding: 14px;
+    margin-bottom: 12px;
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
+}
+
+.mm-post-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.mm-avatar {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    color: #fff;
+    display: grid;
+    place-items: center;
+    font-weight: 700;
+    flex: 0 0 auto;
+}
+
+.mm-avatar.sm {
+    width: 30px;
+    height: 30px;
+    font-size: 12px;
+}
+
+.mm-avatar.lg {
+    width: 72px;
+    height: 72px;
+    font-size: 28px;
+}
+
+.mm-post-meta {
+    flex: 1;
+    min-width: 0;
+}
+
+.mm-name-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.mm-chip {
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--mm-pink-soft);
+    color: var(--mm-pink-deep);
+}
+
+.mm-muted {
+    color: var(--mm-muted);
+    font-size: 12px;
+}
+
+.mm-friend-tag {
+    font-size: 11px;
+    color: var(--mm-pink);
+    border: 1px solid var(--mm-pink);
+    border-radius: 999px;
+    padding: 3px 8px;
+}
+
+.mm-post-text {
+    margin: 12px 0 10px;
+    line-height: 1.55;
+    color: var(--mm-ink);
+    font-size: 15px;
+}
+
+.mm-post-actions {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    color: var(--mm-muted);
+    font-size: 13px;
+}
+
+.mm-link {
+    margin-left: auto;
+    border: 0;
+    background: transparent;
+    color: var(--mm-pink);
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.mm-link:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+.mm-btn {
+    border: 0;
+    border-radius: 999px;
+    background: var(--mm-pink);
+    color: #fff;
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.mm-btn-sm {
+    padding: 6px 10px;
+    font-size: 12px;
+}
+
+.mm-btn-block {
+    width: 100%;
+    margin-top: 8px;
+}
+
+.mm-btn-ghost {
+    background: transparent;
+    color: var(--mm-pink-deep);
+    border: 1px solid #ffc1d8;
+}
+
+.mm-empty {
+    text-align: center;
+    color: var(--mm-muted);
+    padding: 48px 20px;
+    line-height: 1.7;
+}
+
+/* Match */
+.mm-match-stage {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px 18px;
+}
+
+.mm-match-card {
+    width: 100%;
+    background: var(--mm-card);
+    border-radius: 24px;
+    overflow: hidden;
+    box-shadow: 0 14px 36px rgba(255, 45, 123, 0.16);
+    transition: transform .28s ease, opacity .28s ease;
+}
+
+.mm-match-card.swipe-left {
+    transform: translateX(-120%) rotate(-8deg);
+    opacity: 0;
+}
+
+.mm-match-card.swipe-right {
+    transform: translateX(120%) rotate(8deg);
+    opacity: 0;
+}
+
+.mm-match-cover {
+    height: 220px;
+    position: relative;
+    display: grid;
+    place-items: center;
+}
+
+.mm-match-avatar {
+    width: 110px;
+    height: 110px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.22);
+    border: 3px solid rgba(255, 255, 255, 0.55);
+    color: #fff;
+    display: grid;
+    place-items: center;
+    font-size: 42px;
+    font-weight: 800;
+}
+
+.mm-match-online {
+    position: absolute;
+    left: 14px;
+    bottom: 14px;
+    background: rgba(0, 0, 0, 0.35);
+    color: #fff;
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 999px;
+}
+
+.mm-match-online.is-on {
+    background: rgba(34, 197, 94, 0.85);
+}
+
+.mm-match-body {
+    padding: 16px 18px 20px;
+}
+
+.mm-match-body h2 {
+    margin: 0;
+    font-size: 24px;
+}
+
+.mm-match-body h2 small,
+.mm-me-hero h2 small {
+    font-size: 16px;
+    color: var(--mm-muted);
+    font-weight: 600;
+}
+
+.mm-match-bio {
+    margin: 10px 0 12px;
+    line-height: 1.5;
+    color: #333;
+}
+
+.mm-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.mm-tag {
+    background: var(--mm-pink-soft);
+    color: var(--mm-pink-deep);
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 12px;
+}
+
+.mm-match-actions {
+    display: flex;
+    justify-content: center;
+    gap: 36px;
+    padding: 8px 0 18px;
+}
+
+.mm-round-btn {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    border: 0;
+    font-size: 28px;
+    cursor: pointer;
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.12);
+}
+
+.mm-pass {
+    background: #fff;
+    color: #9aa0a6;
+}
+
+.mm-like {
+    background: linear-gradient(160deg, #ff5a9a, var(--mm-pink));
+    color: #fff;
+}
+
+/* Chat */
+.mm-chat-row {
+    width: 100%;
+    border: 0;
+    background: var(--mm-card);
+    border-bottom: 1px solid var(--mm-line);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.mm-chat-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.mm-chat-preview {
+    color: var(--mm-muted);
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 3px;
+}
+
+.mm-badge {
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: var(--mm-pink);
+    color: #fff;
+    font-size: 11px;
+    display: grid;
+    place-items: center;
+}
+
+.mm-thread {
+    padding: 14px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    background:
+        linear-gradient(180deg, #fff7fa 0%, var(--mm-bg) 40%);
+}
+
+.mm-bubble-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    max-width: 88%;
+}
+
+.mm-bubble-row.is-me {
+    align-self: flex-end;
+    flex-direction: row-reverse;
+}
+
+.mm-bubble {
+    padding: 10px 12px;
+    border-radius: 16px;
+    background: #fff;
+    line-height: 1.45;
+    font-size: 14px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.mm-bubble-row.is-me .mm-bubble {
+    background: linear-gradient(160deg, #ff7eb3, var(--mm-pink));
+    color: #fff;
+    border-bottom-right-radius: 6px;
+}
+
+.mm-bubble-row.is-them .mm-bubble {
+    border-bottom-left-radius: 6px;
+}
+
+.mm-composer {
+    display: flex;
+    gap: 8px;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+    background: var(--mm-card);
+    border-top: 1px solid var(--mm-line);
+}
+
+.mm-composer input {
+    flex: 1;
+    border: 1px solid var(--mm-line);
+    border-radius: 999px;
+    padding: 10px 14px;
+    outline: none;
+    font: inherit;
+    background: var(--mm-bg);
+}
+
+.mm-composer input:focus {
+    border-color: #ff9fc4;
+}
+
+/* Me */
+.mm-me {
+    padding-bottom: 18px;
+}
+
+.mm-me-hero {
+    display: flex;
+    gap: 14px;
+    padding: 18px 16px;
+    background:
+        linear-gradient(135deg, #fff 0%, #ffe9f2 100%);
+}
+
+.mm-me-bio {
+    margin: 6px 0;
+    line-height: 1.45;
+}
+
+.mm-form,
+.mm-settings {
+    margin: 12px;
+    padding: 14px;
+    background: var(--mm-card);
+    border-radius: var(--mm-radius);
+}
+
+.mm-form label,
+.mm-switch {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 10px;
+    font-size: 13px;
+    color: #444;
+}
+
+.mm-form input,
+.mm-form select,
+.mm-form textarea {
+    border: 1px solid var(--mm-line);
+    border-radius: 12px;
+    padding: 10px 12px;
+    font: inherit;
+    background: var(--mm-bg);
+}
+
+.mm-switch {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+}
+
+/* Tab bar */
+.mm-tabbar {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    background: rgba(255, 255, 255, 0.96);
+    border-top: 1px solid var(--mm-line);
+    padding: 6px 4px calc(8px + env(safe-area-inset-bottom, 0px));
+}
+
+.mm-tab {
+    position: relative;
+    border: 0;
+    background: transparent;
+    color: var(--mm-muted);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    font-size: 11px;
+    padding: 6px 0;
+    cursor: pointer;
+}
+
+.mm-tab-icon {
+    font-size: 18px;
+    line-height: 1;
+}
+
+.mm-tab.is-active {
+    color: var(--mm-pink);
+    font-weight: 700;
+}
+
+.mm-tab i {
+    position: absolute;
+    top: 2px;
+    right: 18px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: var(--mm-pink);
+    color: #fff;
+    font-style: normal;
+    font-size: 10px;
+    display: grid;
+    place-items: center;
+}
+
+#st-momo-toolbar-btn {
+    cursor: pointer;
+}
+
+@media (max-width: 480px) {
+    .mm-launcher {
+        right: 12px;
+        bottom: 80px;
+    }
+
+    .mm-phone {
+        width: 100vw;
+        height: 100vh;
+        border-radius: 0;
+    }
+}
