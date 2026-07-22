@@ -10,16 +10,22 @@ export class HomeView {
         this.filter = 'nearby'; // nearby | friends | recommend
     }
 
-    refreshFeed() {
+    async refreshFeed() {
+        toast('正在刷新附近异性动态…', 'info');
         const store = this.app.store;
         const profile = store.getProfile();
-        const strangers = createStrangerPool(profile, 6);
-        store.setStrangers(strangers);
-
-        const friendPosts = createPostsForUsers(store.getFriends(), true);
-        const strangerPosts = createPostsForUsers(strangers, false);
-        store.upsertPosts([...friendPosts, ...strangerPosts]);
-        toast('已刷新附近动态', 'success');
+        try {
+            const strangers = await createStrangerPool(profile, 6);
+            store.setStrangers(strangers);
+            const friendPosts = createPostsForUsers(store.getFriends(), true);
+            const strangerPosts = createPostsForUsers(strangers, false);
+            // Replace feed posts (keep friend posts + new stranger posts)
+            store.replacePosts([...friendPosts, ...strangerPosts]);
+            toast('已刷新附近动态', 'success');
+        } catch (e) {
+            console.error(e);
+            toast('刷新失败', 'error');
+        }
         this.app.render('home');
     }
 

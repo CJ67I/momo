@@ -915,6 +915,24 @@ body.st-momo-scroll-lock {
     line-height: 1.7;
 }
 
+.mm-wb-list {
+    max-height: 180px;
+    overflow: auto;
+    border: 1px solid var(--mm-line);
+    border-radius: 12px;
+    padding: 6px 8px;
+    background: var(--mm-bg);
+}
+
+.mm-wb-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 4px;
+    font-size: 13px;
+    color: #333;
+}
+
 /* Phone / narrow viewport: edge-to-edge panel + reliable close affordance */
 @media (max-width: 640px) {
     .mm-overlay {

@@ -38,8 +38,20 @@ export function relativeTime(ts) {
     return formatTime(ts);
 }
 
+/**
+ * Normalize various gender inputs to 'male' | 'female'.
+ * @param {unknown} gender
+ * @returns {'male'|'female'}
+ */
+export function normalizeGender(gender) {
+    const s = String(gender ?? '').trim().toLowerCase();
+    if (['female', 'f', '女', '女生', '女人', 'woman', 'girl', 'lady'].includes(s)) return 'female';
+    if (['male', 'm', '男', '男生', '男人', 'man', 'boy', 'guy'].includes(s)) return 'male';
+    return 'male';
+}
+
 export function oppositeGender(gender) {
-    return gender === 'female' ? 'male' : 'female';
+    return normalizeGender(gender) === 'female' ? 'male' : 'female';
 }
 
 export function avatarGradient(seed = '') {

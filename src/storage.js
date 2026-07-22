@@ -1,4 +1,4 @@
-import { uid } from './utils.js';
+import { normalizeGender, uid } from './utils.js';
 
 export const MODULE_NAME = 'st-momo';
 
@@ -23,6 +23,10 @@ function emptyState() {
         settings: {
             autoReply: true,
             useAiReply: true,
+            useAiNames: true,
+            worldbookEnabled: true,
+            worldbookSelected: [], // book names
+            includeEmbeddedBook: true,
         },
     };
 }
@@ -98,9 +102,25 @@ export class MomoStore {
     }
 
     updateProfile(patch) {
-        this.state.profile = { ...this.state.profile, ...patch, id: 'me' };
+        const next = { ...this.state.profile, ...patch, id: 'me' };
+        if (patch.gender != null) next.gender = normalizeGender(patch.gender);
+        this.state.profile = next;
         this.save();
         return this.state.profile;
+    }
+
+    getWorldbookSettings() {
+        const s = this.getSettings();
+        return {
+            enabled: s.worldbookEnabled !== false,
+            selected: Array.isArray(s.worldbookSelected) ? [...s.worldbookSelected] : [],
+            includeEmbedded: s.includeEmbeddedBook !== false,
+        };
+    }
+
+    setWorldbookSelection(names = []) {
+        const selected = [...new Set((names || []).map((n) => String(n || '').trim()).filter(Boolean))];
+        return this.updateSettings({ worldbookSelected: selected, worldbookEnabled: true });
     }
 
     getFriends() {
@@ -124,6 +144,11 @@ export class MomoStore {
         const map = new Map(this.state.posts.map((p) => [p.id, p]));
         for (const p of posts) map.set(p.id, p);
         this.state.posts = Array.from(map.values()).sort((a, b) => b.createdAt - a.createdAt).slice(0, 80);
+        this.save();
+    }
+
+    replacePosts(posts) {
+        this.state.posts = Array.isArray(posts) ? [...posts] : [];
         this.save();
     }
 

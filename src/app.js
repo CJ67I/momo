@@ -67,12 +67,27 @@ export class MomoApp {
         this._syncFabState();
     }
 
-    _seedIfNeeded() {
-        if (this.store.getPosts().length > 0) return;
+    async _seedIfNeeded() {
+        if (this.store.getPosts().length > 0 && this.store.getStrangers().length > 0) return;
         const profile = this.store.getProfile();
-        const strangers = createStrangerPool(profile, 6);
+        try {
+            const strangers = await createStrangerPool(profile, 6);
+            this.store.setStrangers(strangers);
+            this.store.upsertPosts(createPostsForUsers(strangers, false));
+        } catch (e) {
+            console.warn('[st-momo] seed failed', e);
+        }
+    }
+
+    /** Rebuild stranger pool after gender change */
+    async regenerateOppositePool() {
+        this.matchView?.resetForGenderChange?.();
+        const profile = this.store.getProfile();
+        const strangers = await createStrangerPool(profile, 6);
         this.store.setStrangers(strangers);
-        this.store.upsertPosts(createPostsForUsers(strangers, false));
+        const friendPosts = createPostsForUsers(this.store.getFriends(), true);
+        const strangerPosts = createPostsForUsers(strangers, false);
+        this.store.replacePosts([...friendPosts, ...strangerPosts]);
     }
 
     _tickClock() {

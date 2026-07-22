@@ -152,97 +152,84 @@ export function getChatHistory(limit = 16) {
 }
 
 /**
- * Collect world-info / lorebook snippets relevant to current chat + scan text.
+ * Collect world-info snippets from user-selected books (+ optional scanner).
  * @param {string} scanText
  * @param {number} maxChars
+ * @param {{selected?: string[], includeEmbedded?: boolean, enabled?: boolean}} worldbookPrefs
  */
-export async function getWorldInfoSnippets(scanText = '', maxChars = 2800) {
+export async function getWorldInfoSnippets(scanText = '', maxChars = 2800, worldbookPrefs = {}) {
+    const { listWorldBooks, buildWorldInjectText, loadCharacterEmbeddedBook } = await import('./worldbook.js');
+
+    const available = await listWorldBooks();
+    const bookNames = available.map((b) => b.name);
+    const enabled = worldbookPrefs.enabled !== false;
+    const selected = Array.isArray(worldbookPrefs.selected) && worldbookPrefs.selected.length
+        ? worldbookPrefs.selected
+        : bookNames.slice(0, 3); // default: first few discovered books
+    const includeEmbedded = worldbookPrefs.includeEmbedded !== false;
+
+    if (!enabled) {
+        return { text: '', source: 'disabled', books: bookNames, selected: [], loaded: [] };
+    }
+
+    const inject = await buildWorldInjectText(
+        selected,
+        `${scanText}\n${getChatHistory(8).map((m) => m.text).join('\n')}`,
+        maxChars,
+        { includeEmbedded, preferAllSelected: true },
+    );
+
+    // Also try ST scanner as supplement when selected inject is thin
     const ctx = getCtx();
-    if (!ctx) return { text: '', source: 'none', books: [] };
-
-    const books = typeof ctx.getWorldInfoNames === 'function'
-        ? ctx.getWorldInfoNames()
-        : [];
-
-    // Prefer ST's own scanner (respects keys / budgets)
-    if (typeof ctx.getWorldInfoPrompt === 'function') {
+    if ((!inject.text || inject.text.length < 80) && typeof ctx?.getWorldInfoPrompt === 'function') {
         try {
             const lines = getChatHistory(12).map((m) => `${m.name}: ${m.text}`);
             if (scanText) lines.push(String(scanText));
-            // ST expects newest-first chat string array in many versions
-            const chatScan = [...lines].reverse();
             const result = await ctx.getWorldInfoPrompt(
-                chatScan,
+                [...lines].reverse(),
                 Number(ctx.maxContext) || 4096,
                 true,
                 {},
             );
-            const text = clip(
+            const scanned = clip(
                 result?.worldInfoString
-                || [ ...(result?.worldInfoBeforeEntries || []), ...(result?.worldInfoAfterEntries || []) ].join('\n'),
+                || [...(result?.worldInfoBeforeEntries || []), ...(result?.worldInfoAfterEntries || [])].join('\n'),
                 maxChars,
             );
-            if (text) {
-                return { text, source: 'scanner', books };
+            if (scanned) {
+                return {
+                    text: scanned,
+                    source: 'scanner',
+                    books: bookNames,
+                    selected,
+                    loaded: inject.loaded,
+                };
             }
         } catch (e) {
-            console.warn('[st-momo] getWorldInfoPrompt failed, fallback load', e);
+            console.warn('[st-momo] getWorldInfoPrompt supplement failed', e);
         }
     }
 
-    // Fallback: load books and pick constant / keyword-matched entries
-    if (typeof ctx.loadWorldInfo !== 'function' || !books.length) {
-        // Character lorebook embedded in card
-        const embedded = extractCharacterBookText(ctx, maxChars);
-        return { text: embedded, source: embedded ? 'character_book' : 'none', books };
-    }
-
-    const hay = `${scanText}\n${getChatHistory(8).map((m) => m.text).join('\n')}`.toLowerCase();
-    const chunks = [];
-
-    for (const name of books.slice(0, 6)) {
-        try {
-            const data = await ctx.loadWorldInfo(name);
-            const entries = Object.values(data?.entries || {});
-            for (const entry of entries) {
-                if (!entry || entry.disable) continue;
-                const content = stripHtml(entry.content);
-                if (!content) continue;
-                const keys = [].concat(entry.key || [], entry.keys || [], entry.keysecondary || []).map((k) => String(k).toLowerCase()).filter(Boolean);
-                const hit = entry.constant || !keys.length || keys.some((k) => hay.includes(k));
-                if (hit) chunks.push(`【${name}】${content}`);
-                if (chunks.join('\n').length > maxChars) break;
-            }
-        } catch (e) {
-            console.warn('[st-momo] loadWorldInfo failed', name, e);
+    if (!inject.text && includeEmbedded) {
+        const embedded = loadCharacterEmbeddedBook();
+        if (embedded) {
+            return {
+                text: clip(embedded.entries.map((e) => e.content).join('\n'), maxChars),
+                source: 'character_book',
+                books: bookNames,
+                selected,
+                loaded: [{ name: embedded.name, count: embedded.entries.length, source: embedded.source }],
+            };
         }
-        if (chunks.join('\n').length > maxChars) break;
     }
-
-    const embedded = extractCharacterBookText(ctx, 800);
-    if (embedded) chunks.unshift(embedded);
 
     return {
-        text: clip(chunks.join('\n'), maxChars),
-        source: chunks.length ? 'books' : 'none',
-        books,
+        text: inject.text,
+        source: inject.source,
+        books: bookNames,
+        selected,
+        loaded: inject.loaded,
     };
-}
-
-function extractCharacterBookText(ctx, maxChars) {
-    try {
-        const ch = ctx?.characters?.[ctx.characterId];
-        const book = ch?.data?.character_book || ch?.character_book;
-        const entries = book?.entries || [];
-        if (!Array.isArray(entries) || !entries.length) return '';
-        const parts = entries
-            .filter((e) => e && !e.disable && e.content)
-            .slice(0, 12)
-            .map((e) => stripHtml(e.content));
-        return clip(parts.join('\n'), maxChars);
-    } catch {
-        return '';
-    }
 }
 
 /**
@@ -255,9 +242,22 @@ export async function buildInteractionContext(opts = {}) {
     const persona = getPersonaInfo();
     const character = getCharacterInfo();
     const stChat = getChatHistory(14);
+    let worldbookPrefs = {};
+    try {
+        const bucket = getCtx()?.extensionSettings?.['st-momo'];
+        worldbookPrefs = {
+            enabled: bucket?.settings?.worldbookEnabled !== false,
+            selected: bucket?.settings?.worldbookSelected || [],
+            includeEmbedded: bucket?.settings?.includeEmbeddedBook !== false,
+        };
+    } catch {
+        /* ignore */
+    }
+
     const world = await getWorldInfoSnippets(
         [userText, peer?.nickname, peer?.bio, ...(peer?.tags || [])].filter(Boolean).join(' '),
         2600,
+        worldbookPrefs,
     );
 
     return {

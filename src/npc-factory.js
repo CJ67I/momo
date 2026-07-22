@@ -1,10 +1,8 @@
-import { oppositeGender, pick, uid } from './utils.js';
+import { canUseTavernApi, generateModernNickname, localModernNickname } from './ai-names.js';
+import { normalizeGender, oppositeGender, pick, uid } from './utils.js';
 
-const FEMALE_NAMES = ['小夏', '晚晚', '阿璃', '糯米', '清清', '柚子', '安安', '苏苏', '眠眠', '桃桃', '七七', '软软'];
-const MALE_NAMES = ['阿辰', '北野', '小川', '顾言', '林深', '周屿', '陆行', '谢予', '江白', '韩弈', '陈序', '沈辞'];
-
-const CITIES = ['上海', '北京', '杭州', '成都', '深圳', '广州', '南京', '武汉', '重庆', '苏州', '厦门', '长沙'];
-const TAGS = ['夜猫子', '咖啡成瘾', '健身打卡', '爱看展', '猫奴', '游戏搭子', '徒步', '摄影', '美食探店', '追剧', '听播客', '学外语'];
+const CITIES = ['上海', '北京', '杭州', '成都', '深圳', '广州', '南京', '武汉', '重庆', '苏州', '厦门', '长沙', '西安', '青岛'];
+const TAGS = ['夜猫子', '咖啡成瘾', '健身打卡', '爱看展', '猫奴', '游戏搭子', '徒步', '摄影', '美食探店', '追剧', '听播客', '学外语', '周末宅', '城市漫游'];
 const BIOS = [
     '最近沉迷夜跑，求同频搭子',
     '城市游荡中，欢迎偶遇',
@@ -15,7 +13,7 @@ const BIOS = [
     '摄影/咖啡/独立书店',
     '别聊天气，聊点有意思的',
 ];
-const JOBS = ['设计师', '程序员', '咖啡师', '自由撰稿', '摄影师', '学生', '运营', '音乐人', '实习中', '健身教练'];
+const JOBS = ['设计师', '程序员', '咖啡师', '自由撰稿', '摄影师', '学生', '运营', '音乐人', '实习中', '健身教练', '产品经理', '插画师'];
 const STATUS = ['单身', '保密', '恋爱中', '先处着看看'];
 const ABOUTS = [
     '相信见面比网聊有意思，但前提是聊得来。',
@@ -69,9 +67,6 @@ function buildHomepage(seedName) {
     };
 }
 
-/**
- * Ensure user object has homepage fields (for older saved friends).
- */
 export function ensureHomepage(user) {
     if (!user) return user;
     if (user.homepage?.about) return user;
@@ -82,44 +77,61 @@ export function ensureHomepage(user) {
 }
 
 /**
- * @param {'male'|'female'} gender
+ * Sync create with local modern nickname (instant).
+ * @param {'male'|'female'|string} gender
+ * @param {string} [nickname]
  */
-export function createNpc(gender) {
-    const names = gender === 'female' ? FEMALE_NAMES : MALE_NAMES;
-    const nickname = `${pick(names)}${Math.floor(Math.random() * 90 + 10)}`;
-    const id = uid(gender === 'female' ? 'f' : 'm');
+export function createNpc(gender, nickname) {
+    const g = normalizeGender(gender);
+    const name = String(nickname || '').trim() || `路过的${g === 'female' ? '她' : '他'}${Math.floor(Math.random() * 90 + 10)}`;
+    const id = uid(g === 'female' ? 'f' : 'm');
     return {
         id,
-        nickname,
-        gender,
+        nickname: name,
+        gender: g,
         age: randomAge(),
         city: pick(CITIES),
         bio: pick(BIOS),
         tags: [pick(TAGS), pick(TAGS)].filter((v, i, a) => a.indexOf(v) === i),
         distance: randomDistance(),
-        avatarText: nickname.slice(0, 1),
+        avatarText: name.replace(/[^\u4e00-\u9fa5A-Za-z0-9]/g, '').slice(0, 1) || (g === 'female' ? '她' : '他'),
         isFriend: false,
         online: Math.random() > 0.35,
-        homepage: buildHomepage(nickname),
+        homepage: buildHomepage(name),
         linkedCharacter: null,
     };
 }
 
 /**
- * Build an NPC from current SillyTavern character card.
- * @param {object|null} character from st-bridge.getCharacterInfo()
- * @param {{gender?: string, city?: string}} extras
+ * Create NPC with AI (or local modern) nickname.
+ * @param {'male'|'female'|string} gender
  */
+export async function createNpcAsync(gender, opts = {}) {
+    const g = normalizeGender(gender);
+    let nickname = '';
+    const useAiNames = opts.useAiNames !== false;
+    try {
+        nickname = useAiNames
+            ? await generateModernNickname(g)
+            : localModernNickname(g);
+    } catch (e) {
+        console.warn('[st-momo] nickname gen failed', e);
+        nickname = localModernNickname(g);
+    }
+    return createNpc(g, nickname);
+}
+
 export function createNpcFromCharacter(character, extras = {}) {
     if (!character?.name) return null;
     const nickname = character.name;
     const id = `stchar_${nickname}`.replace(/\s+/g, '_');
     const about = [character.personality, character.description].filter(Boolean).join('\n').slice(0, 280)
         || pick(ABOUTS);
+    const g = normalizeGender(extras.gender || 'female');
     return {
         id,
         nickname,
-        gender: extras.gender || 'female',
+        gender: g,
         age: extras.age || randomAge(),
         city: extras.city || pick(CITIES),
         bio: (character.personality || character.description || pick(BIOS)).slice(0, 40),
@@ -150,18 +162,27 @@ export function createNpcFromCharacter(character, extras = {}) {
 }
 
 /**
- * @param {{gender:'male'|'female'}} profile
+ * @param {{gender?: string}} profile
  * @param {number} count
  */
-export function createStrangerPool(profile, count = 8) {
-    const target = oppositeGender(profile.gender || 'male');
-    return Array.from({ length: count }, () => createNpc(target));
+export async function createStrangerPool(profile, count = 8) {
+    const myGender = normalizeGender(profile?.gender);
+    const target = oppositeGender(myGender);
+    const list = [];
+    let useAiNames = true;
+    try {
+        useAiNames = window.SillyTavern?.getContext?.()?.extensionSettings?.['st-momo']?.settings?.useAiNames !== false;
+    } catch {
+        useAiNames = true;
+    }
+    const allowAi = useAiNames && canUseTavernApi();
+    for (let i = 0; i < count; i++) {
+        list.push(await createNpcAsync(target, { useAiNames: allowAi }));
+    }
+    // Safety: never leak same-gender NPCs into match/feed pool
+    return list.filter((u) => normalizeGender(u.gender) === target);
 }
 
-/**
- * @param {Array} users
- * @param {boolean} asFriend
- */
 export function createPostsForUsers(users, asFriend = false) {
     return users.map((user) => ({
         id: uid('post'),
@@ -180,9 +201,16 @@ export function createPostsForUsers(users, asFriend = false) {
     }));
 }
 
-/**
- * @param {{gender:'male'|'female'}} profile
- */
-export function createMatchCandidate(profile) {
-    return createNpc(oppositeGender(profile.gender || 'male'));
+export async function createMatchCandidate(profile) {
+    let useAiNames = true;
+    try {
+        useAiNames = window.SillyTavern?.getContext?.()?.extensionSettings?.['st-momo']?.settings?.useAiNames !== false;
+    } catch {
+        useAiNames = true;
+    }
+    return createNpcAsync(oppositeGender(profile?.gender), {
+        useAiNames: useAiNames && canUseTavernApi(),
+    });
 }
+
+export { normalizeGender, oppositeGender };
