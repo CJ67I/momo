@@ -1,9 +1,12 @@
 /**
- * Isolated LLM client for Momo — modeled after dual-track phone extensions:
- * prefer SillyTavern *backend* chat-completions (no main-chat UI / Generate lock),
- * fall back to generateRaw only if backend path fails.
+ * Isolated LLM client for Momo.
  *
- * Original implementation; does not copy third-party proprietary code.
+ * Prefer SillyTavern backend `/api/backends/chat-completions/generate` so phone
+ * features never touch the main Generate UI / TempResponseLength / generateRaw.
+ *
+ * generateRaw is intentionally NOT used by default: it temporarily mutates
+ * `oai_settings.openai_max_tokens` and races CHAT_COMPLETION_SETTINGS_READY,
+ * which is a known cause of empty / truncated main-chat replies.
  */
 
 const SETTINGS_TTL_MS = 20_000;
@@ -14,6 +17,12 @@ let guardBound = false;
 let settingsCache = null;
 let settingsCacheAt = 0;
 let csrfToken = '';
+
+/** @type {AbortController[]} */
+let inflightControllers = [];
+
+/** Serialize Momo completions so we never stampede the proxy. */
+let chain = Promise.resolve();
 
 function getCtx() {
     try {
@@ -27,28 +36,76 @@ function sleep(ms) {
     return new Promise((r) => setTimeout(r, ms));
 }
 
+function isStopButtonVisible() {
+    try {
+        const el = document.getElementById('mes_stop');
+        if (!el) return false;
+        const style = window.getComputedStyle?.(el);
+        return style ? style.display !== 'none' : el.style.display !== 'none';
+    } catch {
+        return false;
+    }
+}
+
+function isStreamingActive() {
+    try {
+        const sp = getCtx()?.streamingProcessor;
+        return Boolean(sp && sp.isFinished === false);
+    } catch {
+        return false;
+    }
+}
+
 export function isApiClientBusy() {
     return activeCount > 0;
 }
 
+/** True while SillyTavern main chat is generating / streaming. */
 export function isMainChatGenerating() {
-    return mainChatBusy;
+    return mainChatBusy || isStreamingActive() || isStopButtonVisible();
 }
 
-/** Bind once: pause Momo calls while the main chat Generate pipeline runs. */
+function abortInflightMomo(reason = 'main_chat_started') {
+    const list = inflightControllers.splice(0, inflightControllers.length);
+    for (const c of list) {
+        try {
+            c.abort(reason);
+        } catch {
+            /* ignore */
+        }
+    }
+}
+
+function trackController(controller) {
+    inflightControllers.push(controller);
+    const drop = () => {
+        const i = inflightControllers.indexOf(controller);
+        if (i >= 0) inflightControllers.splice(i, 1);
+    };
+    controller.signal.addEventListener('abort', drop, { once: true });
+    return drop;
+}
+
+/** Bind once: pause/abort Momo while the main chat Generate pipeline runs. */
 export function ensureGenerationGuard() {
     if (guardBound) return;
     const ctx = getCtx();
     const es = ctx?.eventSource;
     const et = ctx?.eventTypes || ctx?.event_types;
-    if (!es?.on || !et) return;
+    if (!es?.on || !et) {
+        // Retry later — ST may not be ready at first mount
+        return;
+    }
 
     const start = et.GENERATION_STARTED || et.generation_started;
     const end = et.GENERATION_ENDED || et.generation_ended;
     const stopped = et.GENERATION_STOPPED || et.generation_stopped;
 
     if (start) {
-        es.on(start, () => { mainChatBusy = true; });
+        es.on(start, () => {
+            mainChatBusy = true;
+            abortInflightMomo('main_chat_started');
+        });
     }
     if (end) {
         es.on(end, () => { mainChatBusy = false; });
@@ -56,13 +113,24 @@ export function ensureGenerationGuard() {
     if (stopped) {
         es.on(stopped, () => { mainChatBusy = false; });
     }
+
+    // Extra safety: some ST paths finish without GENERATION_ENDED
+    const received = et.MESSAGE_RECEIVED || et.message_received;
+    if (received) {
+        es.on(received, () => {
+            if (!isStreamingActive() && !isStopButtonVisible()) {
+                mainChatBusy = false;
+            }
+        });
+    }
+
     guardBound = true;
 }
 
 async function waitWhileMainBusy(timeoutMs = 180_000) {
     ensureGenerationGuard();
     const t0 = Date.now();
-    while (mainChatBusy) {
+    while (isMainChatGenerating()) {
         if (Date.now() - t0 > timeoutMs) {
             throw new Error('main_chat_busy');
         }
@@ -134,6 +202,20 @@ async function loadTavernSettings(force = false) {
     settingsCache = parsed;
     settingsCacheAt = Date.now();
     return parsed;
+}
+
+/**
+ * Prefer live in-memory Chat Completion settings (same object ST uses).
+ * Fall back to /api/settings/get snapshot.
+ */
+async function resolveOaiSettings() {
+    const ctx = getCtx();
+    const live = ctx?.chatCompletionSettings;
+    if (live && typeof live === 'object') {
+        return live;
+    }
+    const settings = await loadTavernSettings();
+    return settings.oai_settings || settings;
 }
 
 function domVal(id) {
@@ -211,6 +293,7 @@ function extractText(data) {
     if (typeof choice?.text === 'string') return choice.text.trim();
     if (typeof data?.content === 'string') return data.content.trim();
     if (typeof data?.response === 'string') return data.response.trim();
+    // Some providers put text in reasoning-only; still treat as empty for callers
     return '';
 }
 
@@ -267,9 +350,8 @@ function buildGeneratePayload(oai, messages, maxTokens) {
     return payload;
 }
 
-async function completeViaBackend(systemPrompt, prompt, maxTokens) {
-    const settings = await loadTavernSettings();
-    const oai = settings.oai_settings || settings;
+async function completeViaBackend(systemPrompt, prompt, maxTokens, signal) {
+    const oai = await resolveOaiSettings();
     const messages = buildMessages(systemPrompt, prompt);
     const payload = buildGeneratePayload(oai, messages, maxTokens);
 
@@ -278,6 +360,7 @@ async function completeViaBackend(systemPrompt, prompt, maxTokens) {
         headers: await getJsonHeaders({ forceRefresh }),
         credentials: 'include',
         body: JSON.stringify(payload),
+        signal,
     });
 
     let res = await post(false);
@@ -297,23 +380,35 @@ async function completeViaBackend(systemPrompt, prompt, maxTokens) {
     return text;
 }
 
+/**
+ * Last-resort path. Mutates ST TempResponseLength — only use when explicitly allowed
+ * and main chat is idle.
+ */
 async function completeViaGenerateRaw(systemPrompt, prompt, maxTokens) {
     const ctx = getCtx();
     const generateRaw = ctx?.generateRaw;
     if (typeof generateRaw !== 'function') {
         throw new Error('generateRaw unavailable');
     }
+    if (isMainChatGenerating()) {
+        throw new Error('generateRaw blocked: main chat busy');
+    }
 
+    // Object form (modern ST). Do NOT pass responseLength — that triggers
+    // TempResponseLength and can permanently corrupt openai_max_tokens.
     try {
         const result = await generateRaw({
             systemPrompt: systemPrompt || undefined,
             prompt,
-            responseLength: maxTokens || 600,
         });
         const text = String(result || '').trim();
         if (text) return text;
     } catch {
         /* try string form */
+    }
+
+    if (isMainChatGenerating()) {
+        throw new Error('generateRaw blocked: main chat busy');
     }
 
     const result = await generateRaw(
@@ -324,32 +419,65 @@ async function completeViaGenerateRaw(systemPrompt, prompt, maxTokens) {
     return text;
 }
 
-/**
- * Main entry: isolated completion for Momo features.
- * @param {{ systemPrompt?: string, prompt: string, maxTokens?: number, allowDuringMainChat?: boolean }} opts
- * @returns {Promise<string>}
- */
-export async function momoComplete(opts) {
+async function runComplete(opts) {
     const systemPrompt = String(opts?.systemPrompt || '');
     const prompt = String(opts?.prompt || '');
     const maxTokens = Number(opts?.maxTokens) || 600;
+    const allowGenerateRaw = opts?.allowGenerateRaw === true;
 
     if (!opts?.allowDuringMainChat) {
         await waitWhileMainBusy();
     }
 
+    // Re-check right before network I/O
+    if (!opts?.allowDuringMainChat && isMainChatGenerating()) {
+        throw new Error('main_chat_busy');
+    }
+
+    const controller = new AbortController();
+    const untrack = trackController(controller);
+
     activeCount += 1;
     try {
         try {
-            return await completeViaBackend(systemPrompt, prompt, maxTokens);
+            return await completeViaBackend(systemPrompt, prompt, maxTokens, controller.signal);
         } catch (e) {
+            if (controller.signal.aborted || e?.name === 'AbortError') {
+                throw new Error('aborted_for_main_chat');
+            }
+            if (!allowGenerateRaw) {
+                console.warn('[st-momo] backend generate failed (no generateRaw fallback)', e);
+                throw e;
+            }
             console.warn('[st-momo] backend generate failed, fallback generateRaw', e);
             if (!opts?.allowDuringMainChat) await waitWhileMainBusy();
             return await completeViaGenerateRaw(systemPrompt, prompt, maxTokens);
         }
     } finally {
+        untrack();
         activeCount = Math.max(0, activeCount - 1);
     }
+}
+
+/**
+ * Main entry: isolated completion for Momo features.
+ * Requests are serialized; in-flight calls abort when main chat starts.
+ *
+ * @param {{
+ *  systemPrompt?: string,
+ *  prompt: string,
+ *  maxTokens?: number,
+ *  allowDuringMainChat?: boolean,
+ *  allowGenerateRaw?: boolean,
+ * }} opts
+ * @returns {Promise<string>}
+ */
+export async function momoComplete(opts) {
+    ensureGenerationGuard();
+    const job = chain.then(() => runComplete(opts), () => runComplete(opts));
+    // Keep the chain alive even if a job fails
+    chain = job.catch(() => {});
+    return job;
 }
 
 /** Convenience for modules that previously called generateRaw directly. */
@@ -358,5 +486,7 @@ export async function callMomoGenerate(systemPrompt, userPrompt, responseLength 
         systemPrompt,
         prompt: userPrompt,
         maxTokens: responseLength,
+        // Never fall back to generateRaw — callers already have local fallbacks.
+        allowGenerateRaw: false,
     });
 }

@@ -29,8 +29,8 @@ function emptyState() {
             useAiNames: true,
             feedPrompt: '',
             storyInject: false,
-            // off | soft | hard — see interop.js (soft = extension prompt, no chat spam)
-            interopMode: 'soft',
+            // off | soft | hard — default off to protect main chat; soft = IN_PROMPT only
+            interopMode: 'off',
             worldbookEnabled: true,
             worldbookSelected: [],
             worldbookByScope: {},
@@ -111,12 +111,12 @@ export class MomoStore {
         // migrate away from local feed templates / useAiFeed toggle
         if ('feedTemplates' in this.state.settings) delete this.state.settings.feedTemplates;
         if ('useAiFeed' in this.state.settings) delete this.state.settings.useAiFeed;
-        // migrate legacy storyInject → interopMode
+        // migrate legacy storyInject → interopMode (prefer off when unset)
         if (!this.state.settings.interopMode) {
-            this.state.settings.interopMode = this.state.settings.storyInject === true ? 'hard' : 'soft';
+            this.state.settings.interopMode = this.state.settings.storyInject === true ? 'hard' : 'off';
         }
         if (!['off', 'soft', 'hard'].includes(this.state.settings.interopMode)) {
-            this.state.settings.interopMode = 'soft';
+            this.state.settings.interopMode = 'off';
         }
         // migrate legacy posts → channel-tagged feeds
         if (Array.isArray(this.state.posts)) {

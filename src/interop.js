@@ -6,17 +6,28 @@
  * - soft: update extension prompt slot only (does NOT write chat bubbles)
  * - hard: soft + rare curated system lines for key RP events (never feed refreshes)
  *
- * Soft inject uses ONLY the stable 4-arg setExtensionPrompt(key, value, position, depth)
- * with position=IN_PROMPT (0) to avoid breaking Chat Completion turns.
+ * Soft inject uses ONLY IN_PROMPT + SYSTEM role.
+ * Never use IN_CHAT + ASSISTANT (causes empty main replies on many CC backends).
  */
+
+import { isMainChatGenerating } from './api-client.js';
 
 const MODULE_NAME = 'st-momo';
 export const INTEROP_KEY = 'st-momo-interop';
+/** Legacy keys that may still sit in ST extension_prompts from older builds. */
+const LEGACY_PROMPT_KEYS = Object.freeze([
+    'st-momo-interop',
+    'st-momo-inject',
+    'st-momo-story',
+    'st-momo',
+]);
+
 export const INTEROP_MODES = Object.freeze(['off', 'soft', 'hard']);
 
 /** IN_PROMPT — do not use IN_CHAT + ASSISTANT role (causes empty main replies). */
 const POSITION_IN_PROMPT = 0;
 const DEPTH = 0;
+const ROLE_SYSTEM = 0;
 
 /** @type {string[]} */
 let eventLog = [];
@@ -69,7 +80,38 @@ function buildPromptBlock() {
 }
 
 /**
- * Safe soft inject — 4-arg form only; empty value clears the slot.
+ * Wipe any momo-related extension prompt slots (including legacy keys).
+ * Prefer direct delete on ctx.extensionPrompts when available.
+ */
+export function purgeAllMomoPrompts() {
+    const ctx = getCtx();
+    const bag = ctx?.extensionPrompts;
+    if (bag && typeof bag === 'object') {
+        for (const key of Object.keys(bag)) {
+            if (key.startsWith('st-momo') || LEGACY_PROMPT_KEYS.includes(key)) {
+                try {
+                    delete bag[key];
+                } catch {
+                    /* ignore */
+                }
+            }
+        }
+    }
+
+    if (typeof ctx?.setExtensionPrompt === 'function') {
+        for (const key of LEGACY_PROMPT_KEYS) {
+            try {
+                ctx.setExtensionPrompt(key, '', POSITION_IN_PROMPT, DEPTH, false, ROLE_SYSTEM);
+            } catch {
+                /* ignore */
+            }
+        }
+    }
+    return true;
+}
+
+/**
+ * Safe soft inject — IN_PROMPT + SYSTEM only; empty value clears the slot.
  */
 export function applySoftPrompt() {
     const ctx = getCtx();
@@ -79,8 +121,16 @@ export function applySoftPrompt() {
     const value = mode === 'off' ? '' : buildPromptBlock();
 
     try {
-        // (key, value, position, depth) — never pass role/scan extras
-        ctx.setExtensionPrompt(INTEROP_KEY, value, POSITION_IN_PROMPT, DEPTH);
+        if (!value) {
+            // Fully remove rather than leave an empty IN_CHAT leftover
+            const bag = ctx.extensionPrompts;
+            if (bag && typeof bag === 'object') {
+                delete bag[INTEROP_KEY];
+            }
+            ctx.setExtensionPrompt(INTEROP_KEY, '', POSITION_IN_PROMPT, DEPTH, false, ROLE_SYSTEM);
+            return true;
+        }
+        ctx.setExtensionPrompt(INTEROP_KEY, value, POSITION_IN_PROMPT, DEPTH, false, ROLE_SYSTEM);
         return true;
     } catch (e) {
         console.warn('[st-momo] setExtensionPrompt failed', e);
@@ -90,14 +140,7 @@ export function applySoftPrompt() {
 
 export function clearSoftPrompt() {
     eventLog = [];
-    const ctx = getCtx();
-    if (typeof ctx?.setExtensionPrompt === 'function') {
-        try {
-            ctx.setExtensionPrompt(INTEROP_KEY, '', POSITION_IN_PROMPT, DEPTH);
-        } catch {
-            /* ignore */
-        }
-    }
+    purgeAllMomoPrompts();
     return true;
 }
 
@@ -121,12 +164,44 @@ export async function recordInteropEvent(line, opts = {}) {
     return true;
 }
 
+async function waitForMainIdle(timeoutMs = 90_000) {
+    const t0 = Date.now();
+    while (isMainChatGenerating()) {
+        if (Date.now() - t0 > timeoutMs) return false;
+        await new Promise((r) => setTimeout(r, 300));
+    }
+    return true;
+}
+
 async function hardInjectChat(text) {
     const ctx = getCtx();
     if (!ctx || !Array.isArray(ctx.chat)) return false;
 
+    // Never mutate chat UI mid-stream — that detaches streamingProcessor nodes
+    // and can leave an empty assistant bubble on screen / in save.
+    const idle = await waitForMainIdle();
+    if (!idle) {
+        console.warn('[st-momo] hard inject skipped: main chat still busy');
+        return false;
+    }
+
     const mes = `【陌陌·剧情同步】${text}`;
     try {
+        // Prefer ST narrator system message when available
+        if (typeof ctx.sendSystemMessage === 'function') {
+            try {
+                ctx.sendSystemMessage('narrator', mes);
+                return true;
+            } catch {
+                try {
+                    ctx.sendSystemMessage('generic', mes);
+                    return true;
+                } catch {
+                    /* fall through to manual push */
+                }
+            }
+        }
+
         const msg = {
             name: '陌陌',
             is_user: false,
@@ -135,19 +210,20 @@ async function hardInjectChat(text) {
             send_date: Date.now(),
             mes,
             extra: {
-                type: 'st-momo-interop',
+                type: 'narrator',
                 isSmallSys: true,
+                momoInterop: true,
             },
         };
         ctx.chat.push(msg);
-        // Prefer not to call addOneMessage — can interact with generation UI.
-        // Still save so it persists if user refreshes.
         await ctx.saveChat?.();
-        // Soft re-render if available without triggering Generate
-        try {
-            ctx.printMessages?.();
-        } catch {
-            /* ignore */
+        // Only re-render when not generating
+        if (!isMainChatGenerating()) {
+            try {
+                ctx.printMessages?.();
+            } catch {
+                /* ignore */
+            }
         }
         return true;
     } catch (e) {
@@ -178,9 +254,13 @@ export function notifyFeedRefresh() {
 
 export function syncInteropFromSettings() {
     const mode = getInteropMode();
-    if (mode === 'off' || !eventLog.length) {
+    if (mode === 'off') {
         clearSoftPrompt();
-        if (mode === 'off') eventLog = [];
+        return mode;
+    }
+    if (!eventLog.length) {
+        // Keep slot empty but ensure legacy IN_CHAT keys are gone
+        purgeAllMomoPrompts();
         return mode;
     }
     applySoftPrompt();

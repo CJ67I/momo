@@ -177,14 +177,18 @@ export async function createStrangerPool(profile, count = 8, opts = {}) {
     // Home feed prefers unique AI names when API is up; preferFast only skips AI names.
     const allowAi = !opts.preferFast && useAiNames && canUseTavernApi();
     const makeOne = () => createNpcAsync(target, { useAiNames: allowAi, city, nearby: true });
+    // Serialize AI nickname calls — parallel generateRaw/TempResponseLength races
+    // were a root cause of empty main-chat replies; ApiClient also queues, but
+    // sequential avoids stampedes when backend is slow.
     const tasks = Array.from({ length: count }, () => makeOne());
-    const list = opts.parallel === false
-        ? await (async () => {
+    const useParallel = opts.parallel === true && !allowAi;
+    const list = useParallel
+        ? (await Promise.all(tasks))
+        : await (async () => {
             const out = [];
             for (const t of tasks) out.push(await t);
             return out;
-        })()
-        : (await Promise.all(tasks));
+        })();
     return list
         .filter((u) => normalizeGender(u.gender) === target)
         .map((u) => ({ ...u, city, sameCity: true, distance: nearbyDistance() }));

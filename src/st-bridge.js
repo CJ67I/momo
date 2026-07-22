@@ -155,6 +155,7 @@ export function getChatHistory(limit = 16) {
         .filter((m) => m.text)
         // Don't echo our own interop/system spam back into Momo prompts
         .filter((m) => m.extraType !== 'st-momo-interop' && m.extraType !== 'st-momo-inject')
+        .filter((m) => m.extraType !== 'narrator' || !m.text.startsWith('【陌陌'))
         .filter((m) => !m.text.startsWith('【陌陌'));
 }
 

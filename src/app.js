@@ -74,8 +74,9 @@ export class MomoApp {
         this._syncFabState();
         startProactiveLoop(this);
         ensureGenerationGuard();
-        // Clear/re-apply soft interop slot (never leave a broken inject)
+        // Purge legacy IN_CHAT / broken slots that can empty main-chat replies
         import('./interop.js').then((m) => {
+            m.purgeAllMomoPrompts();
             m.clearSoftPrompt();
             m.syncInteropFromSettings();
         }).catch(() => {});
