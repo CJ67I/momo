@@ -165,21 +165,30 @@ export function createNpcFromCharacter(character, extras = {}) {
  * @param {{gender?: string}} profile
  * @param {number} count
  */
-export async function createStrangerPool(profile, count = 8) {
+/**
+ * @param {{gender?: string}} profile
+ * @param {number} count
+ * @param {{ parallel?: boolean, preferFast?: boolean }} opts
+ *  preferFast: skip AI names for instant batch (match queue)
+ */
+export async function createStrangerPool(profile, count = 8, opts = {}) {
     const myGender = normalizeGender(profile?.gender);
     const target = oppositeGender(myGender);
-    const list = [];
     let useAiNames = true;
     try {
         useAiNames = window.SillyTavern?.getContext?.()?.extensionSettings?.['st-momo']?.settings?.useAiNames !== false;
     } catch {
         useAiNames = true;
     }
-    const allowAi = useAiNames && canUseTavernApi();
-    for (let i = 0; i < count; i++) {
-        list.push(await createNpcAsync(target, { useAiNames: allowAi }));
-    }
-    // Safety: never leak same-gender NPCs into match/feed pool
+    const allowAi = !opts.preferFast && useAiNames && canUseTavernApi();
+    const tasks = Array.from({ length: count }, () => createNpcAsync(target, { useAiNames: allowAi }));
+    const list = opts.parallel === false
+        ? await (async () => {
+            const out = [];
+            for (const t of tasks) out.push(await t);
+            return out;
+        })()
+        : (await Promise.all(tasks));
     return list.filter((u) => normalizeGender(u.gender) === target);
 }
 

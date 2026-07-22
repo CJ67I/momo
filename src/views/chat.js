@@ -34,18 +34,19 @@ export class ChatView {
                 .map((item) => {
                     const f = item.friend;
                     return `
-                        <div class="mm-chat-row-wrap">
-                        <button type="button" class="mm-avatar mm-avatar-btn" style="background:${avatarGradient(f.id)}" data-action="open-profile" data-id="${escapeHtml(f.id)}">${escapeHtml(f.avatarText || '·')}</button>
-                        <button type="button" class="mm-chat-row" data-action="open-thread" data-id="${escapeHtml(f.id)}">
-                            <div class="mm-chat-main">
-                                <div class="mm-name-row">
-                                    <strong>${escapeHtml(f.nickname)}</strong>
-                                    <span class="mm-muted">${formatTime(item.updatedAt)}</span>
+                        <div class="mm-chat-row-wrap mm-row-enter">
+                            <button type="button" class="mm-avatar mm-avatar-btn" style="background:${avatarGradient(f.id)}" data-action="open-profile" data-id="${escapeHtml(f.id)}">${escapeHtml(f.avatarText || '·')}</button>
+                            <button type="button" class="mm-chat-row" data-action="open-thread" data-id="${escapeHtml(f.id)}">
+                                <div class="mm-chat-main">
+                                    <div class="mm-name-row">
+                                        <strong>${escapeHtml(f.nickname)}</strong>
+                                        <span class="mm-muted">${formatTime(item.updatedAt)}</span>
+                                    </div>
+                                    <div class="mm-chat-preview">${escapeHtml(item.lastMessage)}</div>
                                 </div>
-                                <div class="mm-chat-preview">${escapeHtml(item.lastMessage)}</div>
-                            </div>
-                            ${item.unread ? `<span class="mm-badge">${item.unread}</span>` : ''}
-                        </button>
+                                ${item.unread ? `<span class="mm-badge">${item.unread}</span>` : ''}
+                            </button>
+                            <button type="button" class="mm-chat-del" data-action="delete-friend" data-id="${escapeHtml(f.id)}" title="删除好友">删</button>
                         </div>
                     `;
                 })
@@ -53,9 +54,10 @@ export class ChatView {
             : `<div class="mm-empty">还没有好友聊天<br/>去首页加好友，或去匹配遇见新人</div>`;
 
         return `
-            <section class="mm-page mm-chat">
+            <section class="mm-page mm-chat mm-page-enter">
                 <header class="mm-topbar">
                     <div class="mm-brand">消息</div>
+                    <span class="mm-muted">左滑可删 · 点删</span>
                 </header>
                 <div class="mm-chat-list">${rows}</div>
             </section>
@@ -73,7 +75,7 @@ export class ChatView {
             .map((m) => {
                 const mine = m.from === 'me';
                 return `
-                    <div class="mm-bubble-row ${mine ? 'is-me' : 'is-them'}">
+                    <div class="mm-bubble-row ${mine ? 'is-me' : 'is-them'} mm-bubble-in">
                         ${mine ? '' : `<div class="mm-avatar sm" style="background:${avatarGradient(peer.id)}">${escapeHtml(peer.avatarText || '·')}</div>`}
                         <div class="mm-bubble">${escapeHtml(m.text)}</div>
                     </div>
@@ -82,11 +84,11 @@ export class ChatView {
             .join('');
 
         return `
-            <section class="mm-page mm-chat-thread">
+            <section class="mm-page mm-chat-thread mm-page-enter">
                 <header class="mm-topbar">
                     <button type="button" class="mm-icon-btn" data-action="back-list">‹</button>
                     <button type="button" class="mm-brand mm-name-link" data-action="open-profile" data-id="${escapeHtml(peer.id)}">${escapeHtml(peer.nickname)}</button>
-                    <button type="button" class="mm-link" data-action="open-profile" data-id="${escapeHtml(peer.id)}">主页</button>
+                    <button type="button" class="mm-link mm-danger" data-action="delete-friend" data-id="${escapeHtml(peer.id)}">删除</button>
                 </header>
                 <div class="mm-thread" id="mm-thread">${bubbles}${this.sending ? '<div class="mm-typing">对方正在输入…</div>' : ''}</div>
                 <div class="mm-api-hint">${canUseTavernApi() ? '酒馆 API 已接入，将结合人设/世界书/聊天记录回复' : '酒馆 API 未在线，使用本地话术回复'}</div>
@@ -96,6 +98,16 @@ export class ChatView {
                 </form>
             </section>
         `;
+    }
+
+    _deleteFriend(id) {
+        const friend = this.app.store.getFriend(id);
+        const name = friend?.nickname || '该好友';
+        if (!confirm(`删除好友「${name}」？\n聊天记录也会一并清除。`)) return;
+        this.app.store.removeFriend(id);
+        if (this.activePeerId === id) this.activePeerId = null;
+        toast(`已删除 ${name}`, 'warning');
+        this.app.render('chat');
     }
 
     bind(root) {
@@ -108,6 +120,14 @@ export class ChatView {
                 e.stopPropagation();
                 const id = btn.getAttribute('data-id');
                 if (id) this.app.openProfile(id, 'chat');
+            });
+        });
+
+        root.querySelectorAll('[data-action="delete-friend"]').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this._deleteFriend(btn.getAttribute('data-id'));
             });
         });
 

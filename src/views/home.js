@@ -11,21 +11,23 @@ export class HomeView {
     }
 
     async refreshFeed() {
+        const btn = document.querySelector('[data-action="refresh-feed"]');
+        btn?.classList.add('is-spinning');
         toast('正在刷新附近异性动态…', 'info');
         const store = this.app.store;
         const profile = store.getProfile();
         try {
-            const strangers = await createStrangerPool(profile, 6);
+            const strangers = await createStrangerPool(profile, 6, { parallel: true, preferFast: true });
             store.setStrangers(strangers);
             const friendPosts = createPostsForUsers(store.getFriends(), true);
             const strangerPosts = createPostsForUsers(strangers, false);
-            // Replace feed posts (keep friend posts + new stranger posts)
             store.replacePosts([...friendPosts, ...strangerPosts]);
             toast('已刷新附近动态', 'success');
         } catch (e) {
             console.error(e);
             toast('刷新失败', 'error');
         }
+        btn?.classList.remove('is-spinning');
         this.app.render('home');
     }
 
@@ -45,10 +47,12 @@ export class HomeView {
             `<button type="button" class="${this.filter === id ? 'is-active' : ''}" data-filter="${id}">${label}</button>`;
 
         return `
-            <section class="mm-page mm-home">
+            <section class="mm-page mm-home mm-page-enter">
                 <header class="mm-topbar">
                     <div class="mm-brand">陌陌</div>
-                    <button type="button" class="mm-icon-btn" data-action="refresh-feed" title="刷新动态">↻</button>
+                    <button type="button" class="mm-icon-btn" data-action="refresh-feed" title="刷新动态">
+                        <span class="mm-refresh-icon">↻</span>
+                    </button>
                 </header>
                 <div class="mm-subtabs">
                     ${tab('nearby', '附近')}

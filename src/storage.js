@@ -184,6 +184,19 @@ export class MomoStore {
         return friend;
     }
 
+    removeFriend(userId) {
+        const id = String(userId || '');
+        if (!id) return false;
+        const before = this.state.friends.length;
+        this.state.friends = this.state.friends.filter((f) => f.id !== id);
+        delete this.state.chats[id];
+        this.state.posts = this.state.posts.map((p) =>
+            p.authorId === id ? { ...p, isFriend: false } : p,
+        );
+        this.save();
+        return this.state.friends.length < before;
+    }
+
     isFriend(userId) {
         return this.state.friends.some((f) => f.id === userId);
     }

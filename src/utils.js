@@ -56,12 +56,12 @@ export function oppositeGender(gender) {
 
 export function avatarGradient(seed = '') {
     const palettes = [
-        ['#ff6b9d', '#c44569'],
-        ['#feca57', '#ff9ff3'],
-        ['#48dbfb', '#0abde3'],
-        ['#1dd1a1', '#10ac84'],
-        ['#5f27cd', '#341f97'],
-        ['#ff9f43', '#ee5a24'],
+        ['#5BB8FF', '#2F8CFF'],
+        ['#7CC4FF', '#1A6FE0'],
+        ['#4ECDC4', '#2F8CFF'],
+        ['#74B9FF', '#0984E3'],
+        ['#81ECEC', '#00B4D8'],
+        ['#A0C4FF', '#3A86FF'],
     ];
     let hash = 0;
     const s = String(seed);

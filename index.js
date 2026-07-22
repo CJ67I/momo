@@ -50,7 +50,7 @@ function injectToolbarButton() {
     btn.id = 'st-momo-toolbar-btn';
     btn.className = 'menu_button menu_button_icon';
     btn.title = '陌陌虚拟社交';
-    btn.innerHTML = '<span style="font-weight:800;color:#ff2d7b;">陌</span>';
+    btn.innerHTML = '<span style="font-weight:800;color:#2F8CFF;">陌</span>';
     btn.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
