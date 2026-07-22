@@ -112,7 +112,7 @@ export class MeView {
                 <div class="mm-card mm-bridge-card">
                     <h3>导入 / 选择世界书</h3>
                     <p class="mm-muted" style="margin:0 0 8px;font-size:12px;line-height:1.5">
-                        勾选后写入陌陌扩展，私聊 NPC 时会注入对应条目。可多选。
+                        勾选后按当前角色/会话分别保存。当前范围：<strong>${escapeHtml(wb.scopeLabel || '本地')}</strong>
                     </p>
                     <label class="mm-switch" style="margin-bottom:8px">
                         <span>启用世界书注入</span>
@@ -159,6 +159,13 @@ export class MeView {
                         <span>AI 生成现代网名</span>
                         <input type="checkbox" id="mm-ai-names" ${settings.useAiNames !== false ? 'checked' : ''} />
                     </label>
+                    <label class="mm-switch">
+                        <span>线下模式（事件写入主聊天）</span>
+                        <input type="checkbox" id="mm-story-inject" ${settings.storyInject ? 'checked' : ''} />
+                    </label>
+                    <p class="mm-muted" style="margin:0 12px 8px;font-size:11px;line-height:1.45">
+                        开启后，匹配成功、加好友、刷动态等会以系统消息注入当前酒馆主聊天。
+                    </p>
                     <button type="button" class="mm-btn mm-btn-ghost mm-btn-block" data-action="reset">清空本地数据</button>
                 </div>
             </section>
@@ -224,6 +231,10 @@ export class MeView {
         root.querySelector('#mm-ai-names')?.addEventListener('change', (e) => {
             this.app.store.updateSettings({ useAiNames: e.target.checked });
         });
+        root.querySelector('#mm-story-inject')?.addEventListener('change', (e) => {
+            this.app.store.updateSettings({ storyInject: e.target.checked });
+            toast(e.target.checked ? '已开启线下模式' : '已关闭线下模式', 'info');
+        });
         root.querySelector('#mm-wb-enabled')?.addEventListener('change', (e) => {
             this.app.store.updateSettings({ worldbookEnabled: e.target.checked });
         });
@@ -234,7 +245,8 @@ export class MeView {
         root.querySelector('[data-action="wb-save"]')?.addEventListener('click', () => {
             const names = this._collectCheckedBooks(root);
             this.app.store.setWorldbookSelection(names);
-            toast(`已导入 ${names.length} 本世界书到陌陌`, 'success');
+            const scope = this.app.store.getWorldbookSettings().scopeLabel;
+            toast(`已保存 ${names.length} 本到「${scope}」`, 'success');
             this.app.render('me');
         });
 

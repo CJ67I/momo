@@ -9,6 +9,7 @@ export class ChatView {
         this.app = app;
         this.activePeerId = null;
         this.sending = false;
+        this._swipeDisposes = [];
     }
 
     open(peerId) {
@@ -34,19 +35,23 @@ export class ChatView {
                 .map((item) => {
                     const f = item.friend;
                     return `
-                        <div class="mm-chat-row-wrap mm-row-enter">
-                            <button type="button" class="mm-avatar mm-avatar-btn" style="background:${avatarGradient(f.id)}" data-action="open-profile" data-id="${escapeHtml(f.id)}">${escapeHtml(f.avatarText || '·')}</button>
-                            <button type="button" class="mm-chat-row" data-action="open-thread" data-id="${escapeHtml(f.id)}">
-                                <div class="mm-chat-main">
-                                    <div class="mm-name-row">
-                                        <strong>${escapeHtml(f.nickname)}</strong>
-                                        <span class="mm-muted">${formatTime(item.updatedAt)}</span>
+                        <div class="mm-swipe-row mm-row-enter" data-peer-id="${escapeHtml(f.id)}">
+                            <div class="mm-swipe-actions">
+                                <button type="button" class="mm-swipe-del-btn" data-action="delete-friend" data-id="${escapeHtml(f.id)}">删除</button>
+                            </div>
+                            <div class="mm-chat-row-wrap mm-swipe-front">
+                                <button type="button" class="mm-avatar mm-avatar-btn" style="background:${avatarGradient(f.id)}" data-action="open-profile" data-id="${escapeHtml(f.id)}">${escapeHtml(f.avatarText || '·')}</button>
+                                <button type="button" class="mm-chat-row" data-action="open-thread" data-id="${escapeHtml(f.id)}">
+                                    <div class="mm-chat-main">
+                                        <div class="mm-name-row">
+                                            <strong>${escapeHtml(f.nickname)}</strong>
+                                            <span class="mm-muted">${formatTime(item.updatedAt)}</span>
+                                        </div>
+                                        <div class="mm-chat-preview">${escapeHtml(item.lastMessage)}</div>
                                     </div>
-                                    <div class="mm-chat-preview">${escapeHtml(item.lastMessage)}</div>
-                                </div>
-                                ${item.unread ? `<span class="mm-badge">${item.unread}</span>` : ''}
-                            </button>
-                            <button type="button" class="mm-chat-del" data-action="delete-friend" data-id="${escapeHtml(f.id)}" title="删除好友">删</button>
+                                    ${item.unread ? `<span class="mm-badge">${item.unread}</span>` : ''}
+                                </button>
+                            </div>
                         </div>
                     `;
                 })
@@ -57,9 +62,9 @@ export class ChatView {
             <section class="mm-page mm-chat mm-page-enter">
                 <header class="mm-topbar">
                     <div class="mm-brand">消息</div>
-                    <span class="mm-muted">左滑可删 · 点删</span>
+                    <span class="mm-muted">左滑删除好友</span>
                 </header>
-                <div class="mm-chat-list">${rows}</div>
+                <div class="mm-chat-list mm-scroll">${rows}</div>
             </section>
         `;
     }
@@ -110,7 +115,70 @@ export class ChatView {
         this.app.render('chat');
     }
 
+    _bindRowSwipe(row) {
+        const front = row.querySelector('.mm-swipe-front');
+        if (!front) return () => {};
+        let startX = 0;
+        let startY = 0;
+        let dx = 0;
+        let active = false;
+        const openX = -76;
+
+        const setX = (x, animate) => {
+            front.style.transition = animate ? 'transform .2s ease' : 'none';
+            front.style.transform = `translateX(${x}px)`;
+            row.classList.toggle('is-open', x < -40);
+        };
+
+        const onDown = (e) => {
+            const t = e.touches?.[0] || e;
+            startX = t.clientX;
+            startY = t.clientY;
+            dx = 0;
+            active = true;
+        };
+
+        const onMove = (e) => {
+            if (!active) return;
+            const t = e.touches?.[0] || e;
+            const mx = t.clientX - startX;
+            const my = t.clientY - startY;
+            if (Math.abs(my) > Math.abs(mx) && Math.abs(my) > 8) {
+                active = false;
+                return;
+            }
+            dx = Math.min(0, Math.max(openX - 20, mx));
+            setX(dx, false);
+            if (Math.abs(dx) > 8) e.preventDefault?.();
+        };
+
+        const onUp = () => {
+            if (!active) return;
+            active = false;
+            setX(dx < openX / 2 ? openX : 0, true);
+        };
+
+        front.addEventListener('touchstart', onDown, { passive: true });
+        front.addEventListener('touchmove', onMove, { passive: false });
+        front.addEventListener('touchend', onUp);
+        front.addEventListener('touchcancel', onUp);
+
+        return () => {
+            front.removeEventListener('touchstart', onDown);
+            front.removeEventListener('touchmove', onMove);
+            front.removeEventListener('touchend', onUp);
+            front.removeEventListener('touchcancel', onUp);
+        };
+    }
+
     bind(root) {
+        this._swipeDisposes.forEach((d) => d?.());
+        this._swipeDisposes = [];
+
+        root.querySelectorAll('.mm-swipe-row').forEach((row) => {
+            this._swipeDisposes.push(this._bindRowSwipe(row));
+        });
+
         root.querySelectorAll('[data-action="open-thread"]').forEach((btn) => {
             btn.addEventListener('click', () => this.open(btn.getAttribute('data-id')));
         });

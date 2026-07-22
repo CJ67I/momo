@@ -3,6 +3,8 @@
  * persona / character card / chat log / world info / API status.
  */
 
+import { getContextScope } from './scope.js';
+
 function getCtx() {
     try {
         return window.SillyTavern?.getContext?.() || null;
@@ -245,9 +247,14 @@ export async function buildInteractionContext(opts = {}) {
     let worldbookPrefs = {};
     try {
         const bucket = getCtx()?.extensionSettings?.['st-momo'];
+        const scope = getContextScope();
+        const map = bucket?.settings?.worldbookByScope || {};
+        const hasScoped = Object.prototype.hasOwnProperty.call(map, scope.key);
         worldbookPrefs = {
             enabled: bucket?.settings?.worldbookEnabled !== false,
-            selected: bucket?.settings?.worldbookSelected || [],
+            selected: hasScoped
+                ? (Array.isArray(map[scope.key]) ? map[scope.key] : [])
+                : (bucket?.settings?.worldbookSelected || []),
             includeEmbedded: bucket?.settings?.includeEmbeddedBook !== false,
         };
     } catch {

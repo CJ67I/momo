@@ -1,4 +1,6 @@
 import { createPostsForUsers, createStrangerPool, ensureHomepage } from '../npc-factory.js';
+import { bindPullToRefresh, ptrMarkup } from '../pull-refresh.js';
+import { injectAddFriend, injectFeedRefresh } from '../story-inject.js';
 import { avatarGradient, escapeHtml, relativeTime, toast } from '../utils.js';
 
 export class HomeView {
@@ -7,27 +9,33 @@ export class HomeView {
      */
     constructor(app) {
         this.app = app;
-        this.filter = 'nearby'; // nearby | friends | recommend
+        this.filter = 'nearby';
+        this._ptrDispose = null;
+        this.refreshing = false;
     }
 
-    async refreshFeed() {
-        const btn = document.querySelector('[data-action="refresh-feed"]');
-        btn?.classList.add('is-spinning');
-        toast('正在刷新附近异性动态…', 'info');
+    async refreshFeed({ premium = false } = {}) {
+        if (this.refreshing) return;
+        this.refreshing = true;
+        toast(premium ? '精选刷新：AI 取名中…' : '正在刷新附近异性动态…', 'info');
         const store = this.app.store;
         const profile = store.getProfile();
         try {
-            const strangers = await createStrangerPool(profile, 6, { parallel: true, preferFast: true });
+            const strangers = await createStrangerPool(profile, 6, {
+                parallel: true,
+                preferFast: !premium,
+            });
             store.setStrangers(strangers);
             const friendPosts = createPostsForUsers(store.getFriends(), true);
             const strangerPosts = createPostsForUsers(strangers, false);
             store.replacePosts([...friendPosts, ...strangerPosts]);
-            toast('已刷新附近动态', 'success');
+            await injectFeedRefresh(strangerPosts.length);
+            toast(premium ? '精选动态已更新' : '已刷新附近动态', 'success');
         } catch (e) {
             console.error(e);
             toast('刷新失败', 'error');
         }
-        btn?.classList.remove('is-spinning');
+        this.refreshing = false;
         this.app.render('home');
     }
 
@@ -41,7 +49,7 @@ export class HomeView {
 
         const feedHtml = posts.length
             ? posts.map((p) => this._postCard(p)).join('')
-            : `<div class="mm-empty">还没有动态，点右上角刷新一下吧</div>`;
+            : `<div class="mm-empty">还没有动态<br/>下拉页面即可刷新</div>`;
 
         const tab = (id, label) =>
             `<button type="button" class="${this.filter === id ? 'is-active' : ''}" data-filter="${id}">${label}</button>`;
@@ -50,16 +58,18 @@ export class HomeView {
             <section class="mm-page mm-home mm-page-enter">
                 <header class="mm-topbar">
                     <div class="mm-brand">陌陌</div>
-                    <button type="button" class="mm-icon-btn" data-action="refresh-feed" title="刷新动态">
-                        <span class="mm-refresh-icon">↻</span>
-                    </button>
+                    <button type="button" class="mm-link" data-action="premium-refresh" title="AI 精选刷新">精选</button>
                 </header>
                 <div class="mm-subtabs">
                     ${tab('nearby', '附近')}
                     ${tab('friends', '好友')}
                     ${tab('recommend', '推荐')}
                 </div>
-                <div class="mm-feed">${feedHtml}</div>
+                <div class="mm-feed mm-scroll" id="mm-home-scroll">
+                    ${ptrMarkup()}
+                    ${feedHtml}
+                    <div class="mm-ptr-tip">下拉刷新附近动态</div>
+                </div>
             </section>
         `;
     }
@@ -95,7 +105,15 @@ export class HomeView {
     }
 
     bind(root) {
-        root.querySelector('[data-action="refresh-feed"]')?.addEventListener('click', () => this.refreshFeed());
+        this._ptrDispose?.();
+        const scroll = root.querySelector('#mm-home-scroll');
+        this._ptrDispose = bindPullToRefresh(scroll, {
+            onRefresh: () => this.refreshFeed({ premium: false }),
+        });
+
+        root.querySelector('[data-action="premium-refresh"]')?.addEventListener('click', () => {
+            this.refreshFeed({ premium: true });
+        });
 
         root.querySelectorAll('[data-filter]').forEach((btn) => {
             btn.addEventListener('click', () => {
@@ -105,7 +123,7 @@ export class HomeView {
         });
 
         root.querySelectorAll('[data-action="add-friend"]').forEach((btn) => {
-            btn.addEventListener('click', () => {
+            btn.addEventListener('click', async () => {
                 const id = btn.getAttribute('data-id');
                 const stranger = this.app.store.getStrangers().find((s) => s.id === id);
                 const fromPost = this.app.store.getPosts().find((p) => p.authorId === id);
@@ -124,6 +142,7 @@ export class HomeView {
                     : null));
                 if (!user) return;
                 this.app.store.addFriend(user);
+                await injectAddFriend(user);
                 toast(`已添加 ${user.nickname}`, 'success');
                 this.app.render('home');
             });

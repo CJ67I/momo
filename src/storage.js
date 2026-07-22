@@ -1,3 +1,4 @@
+import { getContextScope } from './scope.js';
 import { normalizeGender, uid } from './utils.js';
 
 export const MODULE_NAME = 'st-momo';
@@ -24,8 +25,10 @@ function emptyState() {
             autoReply: true,
             useAiReply: true,
             useAiNames: true,
+            storyInject: false,
             worldbookEnabled: true,
-            worldbookSelected: [], // book names
+            worldbookSelected: [], // legacy global fallback
+            worldbookByScope: {}, // { [scopeKey]: string[] }
             includeEmbeddedBook: true,
         },
     };
@@ -90,6 +93,9 @@ export class MomoStore {
             }
         }
         if (!this.state.profile?.nickname) this.state.profile = { ...DEFAULT_PROFILE };
+        if (!this.state.settings.worldbookByScope || typeof this.state.settings.worldbookByScope !== 'object') {
+            this.state.settings.worldbookByScope = {};
+        }
         this.save();
     }
 
@@ -111,16 +117,31 @@ export class MomoStore {
 
     getWorldbookSettings() {
         const s = this.getSettings();
+        const scope = getContextScope();
+        const map = s.worldbookByScope || {};
+        const hasScoped = Object.prototype.hasOwnProperty.call(map, scope.key);
+        const selected = hasScoped
+            ? [...(Array.isArray(map[scope.key]) ? map[scope.key] : [])]
+            : (Array.isArray(s.worldbookSelected) ? [...s.worldbookSelected] : []);
         return {
             enabled: s.worldbookEnabled !== false,
-            selected: Array.isArray(s.worldbookSelected) ? [...s.worldbookSelected] : [],
+            selected,
             includeEmbedded: s.includeEmbeddedBook !== false,
+            scopeKey: scope.key,
+            scopeLabel: scope.label,
         };
     }
 
     setWorldbookSelection(names = []) {
         const selected = [...new Set((names || []).map((n) => String(n || '').trim()).filter(Boolean))];
-        return this.updateSettings({ worldbookSelected: selected, worldbookEnabled: true });
+        const scope = getContextScope();
+        const map = { ...(this.getSettings().worldbookByScope || {}) };
+        map[scope.key] = selected;
+        return this.updateSettings({
+            worldbookByScope: map,
+            worldbookSelected: selected,
+            worldbookEnabled: true,
+        });
     }
 
     getFriends() {
