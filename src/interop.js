@@ -6,12 +6,17 @@
  * - soft: update extension prompt slot only (does NOT write chat bubbles)
  * - hard: soft + rare curated system lines for key RP events (never feed refreshes)
  *
- * Inspired by dual-track phone extensions: keep main chat usable while sharing context.
+ * Soft inject uses ONLY the stable 4-arg setExtensionPrompt(key, value, position, depth)
+ * with position=IN_PROMPT (0) to avoid breaking Chat Completion turns.
  */
 
 const MODULE_NAME = 'st-momo';
 export const INTEROP_KEY = 'st-momo-interop';
 export const INTEROP_MODES = Object.freeze(['off', 'soft', 'hard']);
+
+/** IN_PROMPT — do not use IN_CHAT + ASSISTANT role (causes empty main replies). */
+const POSITION_IN_PROMPT = 0;
+const DEPTH = 0;
 
 /** @type {string[]} */
 let eventLog = [];
@@ -33,7 +38,6 @@ function getSettings() {
 }
 
 /**
- * Normalize stored setting (supports legacy storyInject boolean).
  * @param {object} [settings]
  * @returns {'off'|'soft'|'hard'}
  */
@@ -41,7 +45,6 @@ export function getInteropMode(settings = null) {
     const s = settings || getSettings();
     const raw = String(s.interopMode || '').trim().toLowerCase();
     if (INTEROP_MODES.includes(raw)) return raw;
-    // legacy: storyInject true → hard (old behavior wrote bubbles)
     if (s.storyInject === true) return 'hard';
     return 'off';
 }
@@ -66,8 +69,7 @@ function buildPromptBlock() {
 }
 
 /**
- * Push into ST prompt via setExtensionPrompt — never touches chat[].
- * Signature varies by ST version; try modern then fallbacks.
+ * Safe soft inject — 4-arg form only; empty value clears the slot.
  */
 export function applySoftPrompt() {
     const ctx = getCtx();
@@ -76,25 +78,9 @@ export function applySoftPrompt() {
     const mode = getInteropMode();
     const value = mode === 'off' ? '' : buildPromptBlock();
 
-    // position: 1 = IN_CHAT (common); depth: 2–4 so it sits near recent turns
-    const position = 1;
-    const depth = 3;
-    const role = 0; // SYSTEM
-
     try {
-        ctx.setExtensionPrompt(INTEROP_KEY, value, position, depth, false, role);
-        return true;
-    } catch {
-        /* try shorter signature */
-    }
-    try {
-        ctx.setExtensionPrompt(INTEROP_KEY, value, position, depth);
-        return true;
-    } catch {
-        /* try minimal */
-    }
-    try {
-        ctx.setExtensionPrompt(INTEROP_KEY, value);
+        // (key, value, position, depth) — never pass role/scan extras
+        ctx.setExtensionPrompt(INTEROP_KEY, value, POSITION_IN_PROMPT, DEPTH);
         return true;
     } catch (e) {
         console.warn('[st-momo] setExtensionPrompt failed', e);
@@ -104,12 +90,18 @@ export function applySoftPrompt() {
 
 export function clearSoftPrompt() {
     eventLog = [];
-    return applySoftPrompt();
+    const ctx = getCtx();
+    if (typeof ctx?.setExtensionPrompt === 'function') {
+        try {
+            ctx.setExtensionPrompt(INTEROP_KEY, '', POSITION_IN_PROMPT, DEPTH);
+        } catch {
+            /* ignore */
+        }
+    }
+    return true;
 }
 
 /**
- * Record an important Momo event for soft (and optionally hard) interop.
- * Feed refreshes must NOT call this.
  * @param {string} line
  * @param {{hard?: boolean}} [opts]
  */
@@ -129,10 +121,6 @@ export async function recordInteropEvent(line, opts = {}) {
     return true;
 }
 
-/**
- * Write one curated system line into main chat (hard mode only).
- * Avoid sendSystemMessage when possible — prefer is_system push with clear marker.
- */
 async function hardInjectChat(text) {
     const ctx = getCtx();
     if (!ctx || !Array.isArray(ctx.chat)) return false;
@@ -148,15 +136,19 @@ async function hardInjectChat(text) {
             mes,
             extra: {
                 type: 'st-momo-interop',
-                // Hint for some ST builds / scripts; still may appear in UI
                 isSmallSys: true,
             },
         };
         ctx.chat.push(msg);
-        if (typeof ctx.addOneMessage === 'function') {
-            ctx.addOneMessage(msg);
-        }
+        // Prefer not to call addOneMessage — can interact with generation UI.
+        // Still save so it persists if user refreshes.
         await ctx.saveChat?.();
+        // Soft re-render if available without triggering Generate
+        try {
+            ctx.printMessages?.();
+        } catch {
+            /* ignore */
+        }
         return true;
     } catch (e) {
         console.warn('[st-momo] hard inject failed', e);
@@ -180,27 +172,21 @@ export function notifyAddFriend(user) {
     );
 }
 
-/**
- * Feed refresh: soft-only brief note is optional and OFF by default policy —
- * never hard-inject; never spam. We intentionally no-op.
- */
 export function notifyFeedRefresh() {
     return Promise.resolve(false);
 }
 
-/** Re-apply soft prompt after mode change */
 export function syncInteropFromSettings() {
     const mode = getInteropMode();
-    if (mode === 'off') {
-        eventLog = [];
-        applySoftPrompt();
-        return 'off';
+    if (mode === 'off' || !eventLog.length) {
+        clearSoftPrompt();
+        if (mode === 'off') eventLog = [];
+        return mode;
     }
     applySoftPrompt();
     return mode;
 }
 
-/** For UI / debugging */
 export function getInteropEventLog() {
     return [...eventLog];
 }

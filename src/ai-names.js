@@ -1,6 +1,8 @@
 import { pick } from './utils.js';
+import { callMomoGenerate, ensureGenerationGuard } from './api-client.js';
 
 export { canUseTavernApi } from './ai.js';
+import { canUseTavernApi } from './ai.js';
 
 const PREFIX = [
     '不想', '今天也', '半颗', '路过', '在逃', '深夜', '周末', '北城', '南岛', '雾里',
@@ -74,10 +76,7 @@ export async function generateModernNickname(gender) {
     if (!canUseTavernApi()) return localModernNickname(g);
 
     try {
-        const ctx = window.SillyTavern?.getContext?.();
-        const generateRaw = ctx?.generateRaw;
-        if (typeof generateRaw !== 'function') return localModernNickname(g);
-
+        ensureGenerationGuard();
         const systemPrompt = [
             '你是中文社交软件网名生成器。',
             '只输出一个网名，不要解释、不要引号、不要编号。',
@@ -87,13 +86,7 @@ export async function generateModernNickname(gender) {
         ].join('\n');
 
         const prompt = `请生成一个独特的现代网名（${g === 'female' ? '女' : '男'}）：`;
-
-        let result;
-        try {
-            result = await generateRaw({ systemPrompt, prompt, responseLength: 40 });
-        } catch {
-            result = await generateRaw(`${systemPrompt}\n${prompt}`);
-        }
+        const result = await callMomoGenerate(systemPrompt, prompt, 40);
         return sanitizeNickname(result, g);
     } catch (e) {
         console.warn('[st-momo] AI nickname failed', e);

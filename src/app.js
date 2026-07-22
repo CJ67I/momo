@@ -10,6 +10,7 @@ import { ChatView } from './views/chat.js';
 import { MeView } from './views/me.js';
 import { ProfileView } from './views/profile.js';
 import { canUseTavernApi } from './ai.js';
+import { ensureGenerationGuard } from './api-client.js';
 import { toast } from './utils.js';
 
 const TABS = [
@@ -72,8 +73,12 @@ export class MomoApp {
         this._seedIfNeeded();
         this._syncFabState();
         startProactiveLoop(this);
-        // Apply soft interop prompt slot if enabled
-        import('./interop.js').then((m) => m.syncInteropFromSettings()).catch(() => {});
+        ensureGenerationGuard();
+        // Clear/re-apply soft interop slot (never leave a broken inject)
+        import('./interop.js').then((m) => {
+            m.clearSoftPrompt();
+            m.syncInteropFromSettings();
+        }).catch(() => {});
     }
 
     /**
@@ -95,7 +100,7 @@ export class MomoApp {
         try {
             const strangers = await createStrangerPool(profile, 4, {
                 city: profile.city,
-                preferFast: false,
+                preferFast: true,
                 parallel: true,
             });
             this.store.setStrangers(strangers);

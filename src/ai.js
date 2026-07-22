@@ -1,4 +1,5 @@
 import { pick } from './utils.js';
+import { callMomoGenerate, ensureGenerationGuard } from './api-client.js';
 import { buildInteractionContext, formatContextForPrompt, getApiStatus } from './st-bridge.js';
 
 const FALLBACK_REPLIES = [
@@ -19,7 +20,8 @@ const FALLBACK_REPLIES = [
  */
 export function canUseTavernApi() {
     const s = getApiStatus();
-    return Boolean(s.available && s.hasGenerateRaw && s.online);
+    // Online + either generateRaw OR we can hit backend with credentials in-browser
+    return Boolean(s.available && s.online);
 }
 
 function sleep(ms) {
@@ -88,11 +90,10 @@ export async function generateNpcReplies(opts) {
 
     if (useAi) {
         try {
-            const ctx = window.SillyTavern?.getContext?.();
-            const generateRaw = ctx?.generateRaw;
+            ensureGenerationGuard();
             const status = getApiStatus();
 
-            if (typeof generateRaw === 'function' && status.online) {
+            if (status.online) {
                 const bundle = await buildInteractionContext({
                     peer,
                     userText,
@@ -134,20 +135,10 @@ export async function generateNpcReplies(opts) {
                     '请输出 JSON 字符串数组作为回复（1–4 条）：',
                 ].join('\n');
 
-                let result;
-                try {
-                    result = await generateRaw({
-                        systemPrompt,
-                        prompt,
-                        responseLength: 280,
-                    });
-                } catch {
-                    result = await generateRaw(`${systemPrompt}\n\n${prompt}`);
-                }
-
+                const result = await callMomoGenerate(systemPrompt, prompt, 280);
                 const bubbles = parseReplyBubbles(result);
                 if (bubbles.length) return bubbles;
-            } else if (typeof generateRaw === 'function' && !status.online) {
+            } else {
                 console.warn('[st-momo] ST API offline, using fallback reply');
             }
         } catch (e) {

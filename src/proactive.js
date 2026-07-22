@@ -4,6 +4,7 @@
  */
 
 import { canUseTavernApi, deliverBubbles, generateNpcReplies } from './ai.js';
+import { isMainChatGenerating } from './api-client.js';
 import { getVirtualNow } from './time.js';
 import { toast, uid } from './utils.js';
 
@@ -37,6 +38,7 @@ async function generateProactiveBubbles(app, peer) {
 
 async function tick(app) {
     if (busy || !app?.store) return;
+    if (isMainChatGenerating()) return;
     const settings = app.store.getSettings();
     if (!settings.proactiveEnabled) return;
 

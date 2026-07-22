@@ -3,6 +3,7 @@
  */
 
 import { canUseTavernApi } from './ai-names.js';
+import { callMomoGenerate, ensureGenerationGuard } from './api-client.js';
 import { normalizeGender, toast, uid } from './utils.js';
 
 const pending = new Set();
@@ -28,9 +29,7 @@ function parseJsonBlock(raw) {
 export async function generateFriendPersona(user) {
     if (!user?.id || !canUseTavernApi()) return null;
     try {
-        const ctx = window.SillyTavern?.getContext?.();
-        const generateRaw = ctx?.generateRaw;
-        if (typeof generateRaw !== 'function') return null;
+        ensureGenerationGuard();
 
         const gender = normalizeGender(user.gender) === 'female' ? '女' : '男';
         const systemPrompt = [
@@ -52,12 +51,7 @@ export async function generateFriendPersona(user) {
             '请生成完整人设 JSON：',
         ].join('\n');
 
-        let result;
-        try {
-            result = await generateRaw({ systemPrompt, prompt, responseLength: 520 });
-        } catch {
-            result = await generateRaw(`${systemPrompt}\n\n${prompt}`);
-        }
+        const result = await callMomoGenerate(systemPrompt, prompt, 520);
         const data = parseJsonBlock(result);
         if (!data || typeof data !== 'object') return null;
 

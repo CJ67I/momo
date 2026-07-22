@@ -37,9 +37,9 @@ SillyTavern/public/scripts/extensions/third-party/<folder>/
 1. **手机壳 + 视图栈**：可叠加页面（如主页压在 Tab 上），避免粗暴 `display:none` 导致切换闪白
 2. **虚拟时间引擎**：剧情/手机时间可推算，状态栏与动态时间一致
 .cursor/rules/sillytavern-virtual-phone.mdc
-3. **双轨通信（按需）**：默认用「软互通」把陌陌近况写入扩展提示槽，不污染主聊天气泡；硬注入仅可选用于关键剧情事件
+3. **双轨通信**：陌陌调模型走独立 ApiClient（后端 chat-completions），与主聊天 Generate 隔离；软互通用 IN_PROMPT 提示槽，禁止错误的 IN_CHAT+role 注入
 4. **媒体存路径不存 Base64**：大图走酒馆本地资源路径，防止存档膨胀
-5. **酒馆桥接集中在 `st-bridge.js` / `interop.js`**：禁止在 view 里散落直接 `chat.push`
+5. **酒馆桥接集中在 `st-bridge.js` / `interop.js` / `api-client.js`**：禁止在 view 里散落直接 `chat.push` / `generateRaw`
 
 # 实现约束
 

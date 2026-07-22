@@ -77,7 +77,9 @@ SillyTavern/public/scripts/extensions/third-party/st-momo/
 
 ### 酒馆联动（自动接入）
 
-扩展会通过 `SillyTavern.getContext()` **自动使用当前已配置的酒馆 API**（`generateRaw`），无需单独填写 Key：
+扩展通过独立 **ApiClient** 调用酒馆后端 `/api/backends/chat-completions/generate`（与主聊天 Generate 管线隔离）；失败时才回退 `generateRaw`。主聊天生成期间会暂停陌陌请求，避免空气泡。
+
+扩展会通过 `SillyTavern.getContext()` 读取 Persona / 角色卡 / 世界书 / 主聊天近况，无需单独填写 Key：
 
 - 读取 **Persona 人设**、**当前角色卡**、**主聊天记录**
 - **世界书**：在「我 → 导入/选择世界书」勾选后保存；支持 `loadWorldInfo`、前端模块与 `/api/worldinfo/get` 多路径读取
@@ -103,9 +105,10 @@ st-momo/
 ├── settings.html      # 扩展设置抽屉
 ├── src/
 │   ├── app.js         # 手机壳与路由
+│   ├── api-client.js   # 独立后端补全（隔离主聊天 Generate）
+│   ├── interop.js      # 互通模式（软提示槽 / 硬注入）
 │   ├── feed-content.js # 分栏 AI 动态文案
 │   ├── feed-refresh.js # 推荐 / 附近 / 好友刷新管线
-│   ├── interop.js      # 互通模式（软提示槽 / 硬注入）
 │   ├── storage.js     # 本地存储（好友/资料/聊天/分栏动态）
 │   ├── npc-factory.js # NPC / 动态生成
 │   ├── ai.js          # AI / 回落回复

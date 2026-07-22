@@ -3,6 +3,7 @@
  * No local post-text libraries.
  */
 
+import { callMomoGenerate, ensureGenerationGuard } from './api-client.js';
 import { canUseTavernApi } from './ai.js';
 import { normalizeGender, shuffle, uid } from './utils.js';
 
@@ -100,13 +101,12 @@ export function pickDistinctCities(count, avoidCity = '') {
 }
 
 async function callGenerateRaw(systemPrompt, userPrompt, responseLength = 900) {
-    const ctx = window.SillyTavern?.getContext?.();
-    const generateRaw = ctx?.generateRaw;
-    if (typeof generateRaw !== 'function') return null;
+    ensureGenerationGuard();
     try {
-        return await generateRaw({ systemPrompt, prompt: userPrompt, responseLength });
-    } catch {
-        return generateRaw(`${systemPrompt}\n\n${userPrompt}`);
+        return await callMomoGenerate(systemPrompt, userPrompt, responseLength);
+    } catch (e) {
+        console.warn('[st-momo] feed generate failed', e);
+        return null;
     }
 }
 
