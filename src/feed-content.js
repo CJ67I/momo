@@ -312,6 +312,77 @@ export async function generateFriendsBatch(friends) {
     return out;
 }
 
+/**
+ * Batch: match candidates — unique people via one API call (no local nickname pool).
+ * @param {object} profile
+ * @param {number} [count]
+ * @param {{ avoidNames?: string[] }} [opts]
+ * @returns {Promise<object[]>}
+ */
+export async function generateMatchBatch(profile, count = FEED_PAGE_SIZE, opts = {}) {
+    if (!canUseTavernApi()) return [];
+
+    const myGender = normalizeGender(profile?.gender);
+    const targetGender = myGender === 'female' ? 'male' : 'female';
+    const city = String(profile?.city || '').trim() || '同城';
+    const avoid = (opts.avoidNames || []).filter(Boolean).slice(-24);
+
+    const systemPrompt = [
+        '你是陌陌「匹配」候选人批量生成器。',
+        '只输出一个 JSON 数组，不要 markdown，不要解释。',
+        `必须正好 ${count} 个对象，字段：nickname, age, bio, tags, job。`,
+        'tags 为 1-3 个短标签字符串数组；job 为短职业。',
+        'nickname 必须彼此不同，像 2020 年代真实网名，禁止古风、禁止「小X+数字」。',
+        'bio 一句口语简介（12-28 字），每人气质不同。',
+        `城市统一为「${city}」（不要输出 city 字段）。`,
+    ].join('\n');
+
+    const userPrompt = [
+        `浏览者：${profile?.nickname || '旅人'}（${myGender === 'female' ? '女' : '男'}），想匹配异性。`,
+        `生成 ${count} 名异性（${targetGender === 'female' ? '女' : '男'}）候选人，住在「${city}」。`,
+        `唯一批次 ${uid('match').slice(-6)}`,
+        avoid.length ? `禁止使用这些已出现过的昵称：${avoid.join('、')}` : '',
+        '输出示例：[{"nickname":"晚风不回消息","age":24,"bio":"周末只想徒步和吃火锅","tags":["徒步","火锅"],"job":"设计师"}]',
+    ].filter(Boolean).join('\n');
+
+    let rows = extractJsonArray(await callGenerateRaw(systemPrompt, userPrompt, 1100));
+    if (!rows?.length) {
+        rows = extractJsonArray(await callGenerateRaw(systemPrompt, `${userPrompt}\n\n请只输出合法 JSON 数组：`, 1100));
+    }
+    if (!rows?.length) return [];
+
+    const out = [];
+    const seen = new Set(avoid.map((n) => String(n).toLowerCase()));
+    for (let i = 0; i < Math.min(count, rows.length); i++) {
+        const row = rows[i] || {};
+        let nickname = sanitizeNickname(row.nickname);
+        if (!nickname || nickname.length < 2) continue;
+        const key = nickname.toLowerCase();
+        if (seen.has(key)) {
+            nickname = `${nickname}${Math.floor(Math.random() * 90 + 10)}`.slice(0, 16);
+            if (seen.has(nickname.toLowerCase())) continue;
+        }
+        seen.add(nickname.toLowerCase());
+
+        const tags = Array.isArray(row.tags)
+            ? row.tags.map((t) => String(t || '').trim()).filter(Boolean).slice(0, 3)
+            : [];
+        const bio = String(row.bio || '').trim().slice(0, 40);
+        const job = String(row.job || '').trim().slice(0, 20);
+
+        out.push({
+            nickname,
+            age: clampAge(row.age),
+            city,
+            bio: bio || (job ? `${job} · 在${city}` : `在${city}生活`),
+            tags: tags.length ? tags : (job ? [job] : ['同城']),
+            job,
+            gender: targetGender,
+        });
+    }
+    return out;
+}
+
 /** @deprecated single-card path kept unused; batch APIs preferred */
 export async function resolveRecommendCard() {
     return null;

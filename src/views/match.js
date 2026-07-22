@@ -1,4 +1,5 @@
-import { createStrangerPool } from '../npc-factory.js';
+import { canUseTavernApi } from '../ai.js';
+import { createMatchPool } from '../npc-factory.js';
 import { bindPullToRefresh, ptrMarkup } from '../pull-refresh.js';
 import { injectMatchSuccess } from '../story-inject.js';
 import { avatarGradient, escapeHtml, normalizeGender, oppositeGender, toast } from '../utils.js';
@@ -18,6 +19,8 @@ export class MatchView {
         this.loading = false;
         this._ptrDispose = null;
         this._cardSwipeDispose = null;
+        /** @type {string[]} recent nicknames to avoid repeats across refreshes */
+        this._seenNames = [];
     }
 
     _expectedGender() {
@@ -35,6 +38,20 @@ export class MatchView {
     resetForGenderChange() {
         this.queue = [];
         this.loading = false;
+        this._seenNames = [];
+    }
+
+    _avoidNames() {
+        const fromFriends = this.app.store.getFriends().map((f) => f.nickname);
+        const fromQueue = this.queue.map((u) => u.nickname);
+        return [...new Set([...this._seenNames, ...fromFriends, ...fromQueue].filter(Boolean))];
+    }
+
+    _rememberNames(users) {
+        for (const u of users) {
+            if (u?.nickname) this._seenNames.push(u.nickname);
+        }
+        this._seenNames = this._seenNames.slice(-48);
     }
 
     async refillQueue({ replace = false } = {}) {
@@ -44,22 +61,46 @@ export class MatchView {
             this.app.render('match');
         }
         try {
-            const batch = await createStrangerPool(this.app.store.getProfile(), QUEUE_SIZE, {
-                preferFast: true,
-                parallel: true,
-                city: this.app.store.getProfile()?.city,
+            if (!canUseTavernApi()) {
+                toast('酒馆 API 未在线，无法生成匹配候选人（不用本地昵称库）', 'warning');
+                return;
+            }
+
+            const profile = this.app.store.getProfile();
+            const batch = await createMatchPool(profile, QUEUE_SIZE, {
+                city: profile?.city,
+                avoidNames: this._avoidNames(),
             });
             const valid = batch.filter((u) => this._isValid(u));
+            if (!valid.length) {
+                toast('未生成到有效候选人，请重试', 'warning');
+                return;
+            }
+
+            this._rememberNames(valid);
             this.queue = replace ? valid : [...this.queue, ...valid];
+            // Dedupe queue by nickname (case-insensitive)
+            const seen = new Set();
+            this.queue = this.queue.filter((u) => {
+                const key = String(u.nickname || '').toLowerCase();
+                if (!key || seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
+
             const strangers = this.app.store.getStrangers();
             const merged = [...valid, ...strangers]
                 .filter((u, i, arr) => arr.findIndex((x) => x.id === u.id) === i)
-                .slice(0, 30);
+                .slice(0, 40);
             this.app.store.setStrangers(merged);
             toast(replace ? `已刷新 ${valid.length} 位异性` : `已补充 ${valid.length} 位`, 'success');
         } catch (e) {
             console.error(e);
-            toast('匹配池刷新失败', 'error');
+            if (e?.message === 'api_offline') {
+                toast('酒馆 API 未在线，无法匹配', 'warning');
+            } else {
+                toast('匹配池刷新失败', 'error');
+            }
         } finally {
             this.loading = false;
             if (this.app.tab === 'match' && this.app.stackPage == null) {
@@ -96,7 +137,7 @@ export class MatchView {
                     <div class="mm-match-scroll mm-scroll" id="mm-match-scroll">
                         ${ptrMarkup()}
                         <div class="mm-empty">
-                            ${this.loading ? '正在一次生成多位异性…' : '下拉刷新，一次加载多人'}
+                            ${this.loading ? '正在批量生成异性候选人…' : '下拉刷新，由酒馆 API 一次生成多人'}
                             <div class="mm-loading-dots" aria-hidden="true"><i></i><i></i><i></i></div>
                         </div>
                     </div>
@@ -297,7 +338,6 @@ export class MatchView {
         stage?.classList.add('is-swiping');
         card.classList.add('is-leaving');
         card.style.transition = `transform ${SWIPE_MS}ms cubic-bezier(0.2, 0.7, 0.2, 1), opacity ${SWIPE_MS}ms ease, filter ${SWIPE_MS}ms ease`;
-        // force paint then apply exit
         void card.offsetWidth;
         card.classList.add(dir === 'left' ? 'swipe-left' : 'swipe-right');
         setTimeout(() => {

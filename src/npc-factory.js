@@ -1,4 +1,5 @@
 import { canUseTavernApi, generateModernNickname, localModernNickname } from './ai-names.js';
+import { generateMatchBatch } from './feed-content.js';
 import { getVirtualNow } from './time.js';
 import { normalizeGender, oppositeGender, uid } from './utils.js';
 
@@ -128,10 +129,40 @@ export function createNpcFromCharacter(character, extras = {}) {
 }
 
 /**
- * Opposite-gender strangers in the user's city (for 附近).
+ * Opposite-gender match candidates via one AI batch (no local nickname library).
  * @param {{gender?: string, city?: string}} profile
  * @param {number} count
- * @param {{ parallel?: boolean, preferFast?: boolean, city?: string }} opts
+ * @param {{ city?: string, avoidNames?: string[] }} opts
+ */
+export async function createMatchPool(profile, count = 8, opts = {}) {
+    const city = resolveCity(opts.city || profile?.city, opts);
+    if (!canUseTavernApi()) {
+        throw new Error('api_offline');
+    }
+    const cards = await generateMatchBatch(
+        { ...profile, city },
+        count,
+        { avoidNames: opts.avoidNames || [] },
+    );
+    return cards.map((card) => {
+        const user = createNpc(card.gender, card.nickname, { city, nearby: true });
+        user.age = card.age;
+        user.bio = card.bio;
+        user.tags = card.tags || [];
+        user.distance = nearbyDistance();
+        user.sameCity = true;
+        user.homepage = {
+            ...stubHomepage(card.nickname),
+            job: card.job || '',
+            about: card.bio || '',
+        };
+        return user;
+    });
+}
+
+/**
+ * Opposite-gender strangers in the user's city (legacy helpers / seed).
+ * Prefer createMatchPool for Match UI.
  */
 export async function createStrangerPool(profile, count = 8, opts = {}) {
     const myGender = normalizeGender(profile?.gender);
