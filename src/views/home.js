@@ -2,7 +2,7 @@ import { canUseTavernApi } from '../ai.js';
 import { refreshFeedChannel } from '../feed-refresh.js';
 import { ensureHomepage } from '../npc-factory.js';
 import { bindPullToRefresh, ptrMarkup } from '../pull-refresh.js';
-import { injectAddFriend } from '../story-inject.js';
+import { notifyAddFriend } from '../interop.js';
 import { avatarGradient, escapeHtml, normalizeGender, relativeTime, toast } from '../utils.js';
 
 const TABS = [
@@ -224,7 +224,7 @@ export class HomeView {
                     : null));
                 if (!user) return;
                 this.app.addFriendAndEnrich(user);
-                await injectAddFriend(user);
+                await notifyAddFriend(user);
                 toast(`已添加 ${user.nickname}，可到「好友」下拉刷新看动态`, 'success');
                 this.app.render('home');
             });

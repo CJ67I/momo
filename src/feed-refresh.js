@@ -10,7 +10,6 @@ import {
     generateRecommendBatch,
 } from './feed-content.js';
 import { createNpc } from './npc-factory.js';
-import { injectFeedRefresh } from './story-inject.js';
 import { getVirtualNow } from './time.js';
 import { shuffle, uid } from './utils.js';
 
@@ -79,7 +78,6 @@ export async function refreshRecommend(store, profile) {
 
     mergeStrangers(store, authors);
     store.replaceChannelPosts('recommend', posts);
-    await injectFeedRefresh(posts.length, 'recommend');
     return posts;
 }
 
@@ -111,7 +109,6 @@ export async function refreshNearby(store, profile) {
     ].slice(0, 48));
 
     store.replaceChannelPosts('nearby', posts);
-    await injectFeedRefresh(posts.length, 'nearby');
     return posts;
 }
 
@@ -160,7 +157,6 @@ export async function refreshFriends(store) {
 
     if (!posts.length) throw new Error('gen_empty');
     store.replaceChannelPosts('friends', posts);
-    await injectFeedRefresh(posts.length, 'friends');
     return posts;
 }
 

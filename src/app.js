@@ -72,6 +72,8 @@ export class MomoApp {
         this._seedIfNeeded();
         this._syncFabState();
         startProactiveLoop(this);
+        // Apply soft interop prompt slot if enabled
+        import('./interop.js').then((m) => m.syncInteropFromSettings()).catch(() => {});
     }
 
     /**

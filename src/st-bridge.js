@@ -149,8 +149,13 @@ export function getChatHistory(limit = 16) {
             name: String(m?.name || (m?.is_user ? ctx.name1 : ctx.name2) || ''),
             isUser: Boolean(m?.is_user),
             text: clip(stripHtml(m?.mes || m?.message || ''), 500),
+            isSystem: Boolean(m?.is_system),
+            extraType: String(m?.extra?.type || ''),
         }))
-        .filter((m) => m.text);
+        .filter((m) => m.text)
+        // Don't echo our own interop/system spam back into Momo prompts
+        .filter((m) => m.extraType !== 'st-momo-interop' && m.extraType !== 'st-momo-inject')
+        .filter((m) => !m.text.startsWith('【陌陌'));
 }
 
 /**
@@ -305,12 +310,15 @@ export function formatContextForPrompt(bundle) {
 
     lines.push('\n## 酒馆主聊天最近记录');
     if (bundle.stChat?.length) {
-        for (const m of bundle.stChat.slice(-10)) {
+        for (const m of bundle.stChat.slice(-12)) {
             lines.push(`${m.isUser ? '玩家' : m.name || '角色'}: ${m.text}`);
         }
     } else {
         lines.push('（暂无主聊天记录）');
     }
+
+    lines.push('\n## 互通说明');
+    lines.push('你在陌陌内回复时，应与上述主线人设/剧情保持一致；不要否认主聊天里已发生的事。');
 
     return lines.join('\n');
 }

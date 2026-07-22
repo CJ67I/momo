@@ -1,7 +1,7 @@
 import { canUseTavernApi } from '../ai.js';
 import { createMatchPool } from '../npc-factory.js';
 import { bindPullToRefresh, ptrMarkup } from '../pull-refresh.js';
-import { injectMatchSuccess } from '../story-inject.js';
+import { notifyMatchSuccess } from '../interop.js';
 import { avatarGradient, escapeHtml, normalizeGender, oppositeGender, toast } from '../utils.js';
 
 const QUEUE_SIZE = 8;
@@ -220,7 +220,7 @@ export class MatchView {
             if (c) {
                 this.app.store.pushMatch(c);
                 this.app.addFriendAndEnrich(c);
-                await injectMatchSuccess(c);
+                await notifyMatchSuccess(c);
                 toast(`匹配成功！已添加 ${c.nickname}`, 'success');
             }
             this.advance();
