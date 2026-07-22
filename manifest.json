@@ -3,7 +3,7 @@
   "name": "st-momo",
   "description": "为 SillyTavern 打造的陌陌风格虚拟社交扩展：动态首页、随机匹配、好友聊天，数据本地持久化。",
   "author": "st-momo",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "loading_order": 100,
   "requires": [],
   "optional": [],
