@@ -1,4 +1,4 @@
-import { generateNpcReply } from '../ai.js';
+import { canUseTavernApi, generateNpcReply } from '../ai.js';
 import { avatarGradient, escapeHtml, formatTime, toast, uid } from '../utils.js';
 
 export class ChatView {
@@ -34,8 +34,9 @@ export class ChatView {
                 .map((item) => {
                     const f = item.friend;
                     return `
+                        <div class="mm-chat-row-wrap">
+                        <button type="button" class="mm-avatar mm-avatar-btn" style="background:${avatarGradient(f.id)}" data-action="open-profile" data-id="${escapeHtml(f.id)}">${escapeHtml(f.avatarText || '·')}</button>
                         <button type="button" class="mm-chat-row" data-action="open-thread" data-id="${escapeHtml(f.id)}">
-                            <div class="mm-avatar" style="background:${avatarGradient(f.id)}">${escapeHtml(f.avatarText || '·')}</div>
                             <div class="mm-chat-main">
                                 <div class="mm-name-row">
                                     <strong>${escapeHtml(f.nickname)}</strong>
@@ -45,6 +46,7 @@ export class ChatView {
                             </div>
                             ${item.unread ? `<span class="mm-badge">${item.unread}</span>` : ''}
                         </button>
+                        </div>
                     `;
                 })
                 .join('')
@@ -83,10 +85,11 @@ export class ChatView {
             <section class="mm-page mm-chat-thread">
                 <header class="mm-topbar">
                     <button type="button" class="mm-icon-btn" data-action="back-list">‹</button>
-                    <div class="mm-brand">${escapeHtml(peer.nickname)}</div>
-                    <span class="mm-muted">${peer.online ? '在线' : '离线'}</span>
+                    <button type="button" class="mm-brand mm-name-link" data-action="open-profile" data-id="${escapeHtml(peer.id)}">${escapeHtml(peer.nickname)}</button>
+                    <button type="button" class="mm-link" data-action="open-profile" data-id="${escapeHtml(peer.id)}">主页</button>
                 </header>
-                <div class="mm-thread" id="mm-thread">${bubbles}</div>
+                <div class="mm-thread" id="mm-thread">${bubbles}${this.sending ? '<div class="mm-typing">对方正在输入…</div>' : ''}</div>
+                <div class="mm-api-hint">${canUseTavernApi() ? '酒馆 API 已接入，将结合人设/世界书/聊天记录回复' : '酒馆 API 未在线，使用本地话术回复'}</div>
                 <form class="mm-composer" id="mm-composer">
                     <input type="text" id="mm-chat-input" placeholder="说点什么…" maxlength="200" autocomplete="off" />
                     <button type="submit" class="mm-btn" ${this.sending ? 'disabled' : ''}>发送</button>
@@ -98,6 +101,14 @@ export class ChatView {
     bind(root) {
         root.querySelectorAll('[data-action="open-thread"]').forEach((btn) => {
             btn.addEventListener('click', () => this.open(btn.getAttribute('data-id')));
+        });
+
+        root.querySelectorAll('[data-action="open-profile"]').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const id = btn.getAttribute('data-id');
+                if (id) this.app.openProfile(id, 'chat');
+            });
         });
 
         root.querySelector('[data-action="back-list"]')?.addEventListener('click', () => this.closeThread());
@@ -128,12 +139,15 @@ export class ChatView {
             createdAt: Date.now(),
         });
         if (input) input.value = '';
-        this.app.render('chat');
 
         const settings = this.app.store.getSettings();
-        if (!settings.autoReply) return;
+        if (!settings.autoReply) {
+            this.app.render('chat');
+            return;
+        }
 
         this.sending = true;
+        this.app.render('chat');
         try {
             const reply = await generateNpcReply({
                 peer,
@@ -148,15 +162,15 @@ export class ChatView {
                 text: reply,
                 createdAt: Date.now(),
             });
-            if (this.activePeerId === peer.id) {
-                this.app.store.markRead(peer.id);
-                this.app.render('chat');
-            }
         } catch (err) {
             console.error(err);
             toast('回复失败', 'error');
         } finally {
             this.sending = false;
+            if (this.activePeerId === peer.id) {
+                this.app.store.markRead(peer.id);
+                this.app.render('chat');
+            }
         }
     }
 }

@@ -44,6 +44,7 @@ export class MatchView {
                             <p class="mm-muted">${escapeHtml(c.city)} · ${escapeHtml(c.distance || '')}</p>
                             <p class="mm-match-bio">${escapeHtml(c.bio)}</p>
                             <div class="mm-tags">${tags}</div>
+                            <button type="button" class="mm-link" data-action="view-profile" style="margin-top:10px">查看主页</button>
                         </div>
                     </div>
                 </div>
@@ -73,6 +74,17 @@ export class MatchView {
                 this.candidate = null;
                 this.app.render('match');
             });
+        });
+
+        root.querySelector('[data-action="view-profile"]')?.addEventListener('click', () => {
+            const c = this.candidate;
+            if (!c) return;
+            // stash into strangers so profile can resolve
+            const list = this.app.store.getStrangers();
+            if (!list.some((s) => s.id === c.id)) {
+                this.app.store.setStrangers([c, ...list].slice(0, 20));
+            }
+            this.app.openProfile(c.id, 'match');
         });
     }
 

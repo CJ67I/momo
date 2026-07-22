@@ -167,6 +167,27 @@ export class MomoStore {
         return this.state.friends.find((f) => f.id === userId) || null;
     }
 
+    getUser(userId) {
+        return (
+            this.state.friends.find((f) => f.id === userId)
+            || this.state.strangers.find((s) => s.id === userId)
+            || this.state.matchHistory.find((m) => m.id === userId)
+            || null
+        );
+    }
+
+    updateUser(user) {
+        if (!user?.id) return;
+        const patchList = (list) => {
+            const idx = list.findIndex((x) => x.id === user.id);
+            if (idx >= 0) list[idx] = { ...list[idx], ...user };
+        };
+        patchList(this.state.friends);
+        patchList(this.state.strangers);
+        patchList(this.state.matchHistory);
+        this.save();
+    }
+
     getChatList() {
         return this.state.friends
             .map((f) => {

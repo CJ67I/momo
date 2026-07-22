@@ -1,4 +1,4 @@
-import { createPostsForUsers, createStrangerPool } from '../npc-factory.js';
+import { createPostsForUsers, createStrangerPool, ensureHomepage } from '../npc-factory.js';
 import { avatarGradient, escapeHtml, relativeTime, toast } from '../utils.js';
 
 export class HomeView {
@@ -59,10 +59,10 @@ export class HomeView {
         return `
             <article class="mm-card mm-post" data-author-id="${escapeHtml(post.authorId)}">
                 <div class="mm-post-head">
-                    <div class="mm-avatar" style="background:${avatarGradient(post.authorId)}">${escapeHtml(post.avatarText || '·')}</div>
+                    <button type="button" class="mm-avatar mm-avatar-btn" style="background:${avatarGradient(post.authorId)}" data-action="open-profile" data-id="${escapeHtml(post.authorId)}">${escapeHtml(post.avatarText || '·')}</button>
                     <div class="mm-post-meta">
                         <div class="mm-name-row">
-                            <strong>${escapeHtml(post.authorName)}</strong>
+                            <button type="button" class="mm-name-link" data-action="open-profile" data-id="${escapeHtml(post.authorId)}"><strong>${escapeHtml(post.authorName)}</strong></button>
                             <span class="mm-chip">${post.authorAge || '?'}</span>
                             <span class="mm-muted">${escapeHtml(post.authorCity || '')}</span>
                         </div>
@@ -99,7 +99,7 @@ export class HomeView {
                 const id = btn.getAttribute('data-id');
                 const stranger = this.app.store.getStrangers().find((s) => s.id === id);
                 const fromPost = this.app.store.getPosts().find((p) => p.authorId === id);
-                const user = stranger || (fromPost
+                const user = ensureHomepage(stranger || (fromPost
                     ? {
                         id: fromPost.authorId,
                         nickname: fromPost.authorName,
@@ -111,7 +111,7 @@ export class HomeView {
                         bio: '来自附近动态',
                         tags: ['附近'],
                     }
-                    : null);
+                    : null));
                 if (!user) return;
                 this.app.store.addFriend(user);
                 toast(`已添加 ${user.nickname}`, 'success');
@@ -124,6 +124,13 @@ export class HomeView {
                 if (btn.hasAttribute('disabled')) return;
                 const id = btn.getAttribute('data-id');
                 this.app.openChat(id);
+            });
+        });
+
+        root.querySelectorAll('[data-action="open-profile"]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const id = btn.getAttribute('data-id');
+                if (id) this.app.openProfile(id, 'home');
             });
         });
     }

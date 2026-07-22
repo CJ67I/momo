@@ -5,6 +5,7 @@ import { HomeView } from './views/home.js';
 import { MatchView } from './views/match.js';
 import { ChatView } from './views/chat.js';
 import { MeView } from './views/me.js';
+import { ProfileView } from './views/profile.js';
 
 const TABS = [
     { id: 'home', label: '首页', icon: '⌂' },
@@ -20,7 +21,9 @@ export class MomoApp {
         this.matchView = new MatchView(this);
         this.chatView = new ChatView(this);
         this.meView = new MeView(this);
+        this.profileView = new ProfileView(this);
         this.tab = 'home';
+        this.stackPage = null; // 'profile' | null
         this.open = false;
         this.root = null;
         this.fab = null;
@@ -70,6 +73,17 @@ export class MomoApp {
         const strangers = createStrangerPool(profile, 6);
         this.store.setStrangers(strangers);
         this.store.upsertPosts(createPostsForUsers(strangers, false));
+    }
+
+    _tickClock() {
+        const el = this.root?.querySelector('#mm-clock');
+        const paint = () => {
+            if (!el) return;
+            const d = new Date();
+            el.textContent = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        };
+        paint();
+        setInterval(paint, 30000);
     }
 
     _bindFab() {
@@ -168,7 +182,7 @@ export class MomoApp {
             this._lockBodyScroll(true);
             this._syncViewportClass();
             requestAnimationFrame(() => overlay.classList.add('is-visible'));
-            this.render(this.tab);
+            this.render(this.stackPage === 'profile' ? 'profile' : this.tab);
         } else {
             overlay.classList.remove('is-visible');
             overlay.setAttribute('aria-hidden', 'true');
@@ -182,49 +196,67 @@ export class MomoApp {
     }
 
     openChat(peerId) {
+        this.stackPage = null;
         this.tab = 'chat';
         this.chatView.open(peerId);
     }
 
+    openProfile(userId, returnTab = this.tab) {
+        this.profileView.open(userId, returnTab);
+    }
+
     render(tab = this.tab) {
-        this.tab = tab;
+        if (tab !== 'profile') {
+            this.tab = tab;
+            if (tab !== 'chat') this.chatView.activePeerId = null;
+        }
+
         const screen = this.root?.querySelector('#mm-screen');
         const tabbar = this.root?.querySelector('#mm-tabbar');
         if (!screen || !tabbar) return;
 
-        const unread = this.store.getChatList().reduce((n, c) => n + (c.unread || 0), 0);
-        tabbar.innerHTML = TABS.map((t) => {
-            const badge = t.id === 'chat' && unread > 0 ? `<i>${unread > 99 ? '99+' : unread}</i>` : '';
-            return `
-                <button type="button" class="mm-tab ${this.tab === t.id ? 'is-active' : ''}" data-tab="${t.id}">
-                    <span class="mm-tab-icon">${t.icon}</span>
-                    <span>${t.label}</span>
-                    ${badge}
-                </button>
-            `;
-        }).join('');
+        const showProfile = this.stackPage === 'profile' || tab === 'profile';
+        tabbar.style.display = showProfile ? 'none' : '';
 
-        tabbar.querySelectorAll('[data-tab]').forEach((btn) => {
-            btn.addEventListener('click', () => {
-                const next = btn.getAttribute('data-tab');
-                if (next !== 'chat') this.chatView.activePeerId = null;
-                this.render(next);
+        if (!showProfile) {
+            const unread = this.store.getChatList().reduce((n, c) => n + (c.unread || 0), 0);
+            tabbar.innerHTML = TABS.map((t) => {
+                const badge = t.id === 'chat' && unread > 0 ? `<i>${unread > 99 ? '99+' : unread}</i>` : '';
+                return `
+                    <button type="button" class="mm-tab ${this.tab === t.id ? 'is-active' : ''}" data-tab="${t.id}">
+                        <span class="mm-tab-icon">${t.icon}</span>
+                        <span>${t.label}</span>
+                        ${badge}
+                    </button>
+                `;
+            }).join('');
+
+            tabbar.querySelectorAll('[data-tab]').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    this.stackPage = null;
+                    const next = btn.getAttribute('data-tab');
+                    this.render(next);
+                });
             });
-        });
+        }
 
         let view;
-        switch (this.tab) {
-            case 'match':
-                view = this.matchView;
-                break;
-            case 'chat':
-                view = this.chatView;
-                break;
-            case 'me':
-                view = this.meView;
-                break;
-            default:
-                view = this.homeView;
+        if (showProfile) {
+            view = this.profileView;
+        } else {
+            switch (this.tab) {
+                case 'match':
+                    view = this.matchView;
+                    break;
+                case 'chat':
+                    view = this.chatView;
+                    break;
+                case 'me':
+                    view = this.meView;
+                    break;
+                default:
+                    view = this.homeView;
+            }
         }
 
         screen.innerHTML = view.render();

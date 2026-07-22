@@ -753,6 +753,168 @@ body.st-momo-scroll-lock {
     cursor: pointer;
 }
 
+/* Profile homepage */
+.mm-profile-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.mm-profile-cover {
+    height: 120px;
+}
+
+.mm-profile-head {
+    display: flex;
+    gap: 12px;
+    padding: 0 16px;
+    margin-top: -36px;
+    align-items: flex-end;
+}
+
+.mm-avatar.xl {
+    width: 84px;
+    height: 84px;
+    font-size: 32px;
+    border: 3px solid #fff;
+    box-shadow: 0 4px 14px rgba(0,0,0,.12);
+}
+
+.mm-avatar-btn,
+.mm-name-link {
+    border: 0;
+    background: transparent;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    text-align: left;
+}
+
+.mm-avatar-btn {
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+}
+
+.mm-profile-head-text h2 {
+    margin: 0;
+    font-size: 20px;
+}
+
+.mm-profile-actions {
+    padding: 14px 16px 6px;
+}
+
+.mm-profile-about h3,
+.mm-card h3,
+.mm-bridge-card h3 {
+    margin: 0 0 8px;
+    font-size: 15px;
+}
+
+.mm-profile-meta {
+    display: flex;
+    gap: 14px;
+    margin-top: 10px;
+    color: var(--mm-muted);
+    font-size: 12px;
+}
+
+.mm-profile-section-title {
+    padding: 8px 16px;
+    font-weight: 700;
+    color: #444;
+}
+
+.mm-moments {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.mm-moment {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+}
+
+.mm-moment-dot {
+    width: 8px;
+    height: 8px;
+    margin-top: 6px;
+    border-radius: 50%;
+    background: var(--mm-pink);
+    flex: 0 0 auto;
+}
+
+.mm-link-tag {
+    display: inline-block;
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--mm-pink-deep);
+    background: var(--mm-pink-soft);
+    padding: 2px 8px;
+    border-radius: 999px;
+}
+
+.mm-chat-row-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    background: var(--mm-card);
+    border-bottom: 1px solid var(--mm-line);
+    padding-left: 10px;
+}
+
+.mm-chat-row-wrap .mm-chat-row {
+    border-bottom: 0;
+    flex: 1;
+}
+
+.mm-typing {
+    color: var(--mm-muted);
+    font-size: 12px;
+    padding: 4px 8px;
+}
+
+.mm-api-hint {
+    font-size: 11px;
+    color: var(--mm-muted);
+    padding: 4px 12px 0;
+    background: var(--mm-card);
+}
+
+.mm-bridge-card {
+    margin: 12px;
+}
+
+.mm-bridge-status {
+    font-size: 13px;
+    margin: 0 0 8px;
+    padding: 8px 10px;
+    border-radius: 10px;
+}
+
+.mm-bridge-status.ok {
+    background: #e8f8ef;
+    color: #177245;
+}
+
+.mm-bridge-status.warn {
+    background: #fff4e5;
+    color: #9a5b00;
+}
+
+.mm-bridge-list {
+    margin: 0 0 10px;
+    padding-left: 18px;
+    color: #555;
+    font-size: 12px;
+    line-height: 1.7;
+}
+
 /* Phone / narrow viewport: edge-to-edge panel + reliable close affordance */
 @media (max-width: 640px) {
     .mm-overlay {

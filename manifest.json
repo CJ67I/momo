@@ -3,7 +3,7 @@
   "name": "momo",
   "description": "为 SillyTavern 打造的陌陌风格虚拟社交扩展：动态首页、随机匹配、好友聊天，数据本地持久化。页面右侧粉色悬浮按钮可打开/关闭。",
   "author": "CJ67I",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "loading_order": 100,
   "requires": [],
   "optional": [],
