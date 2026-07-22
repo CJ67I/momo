@@ -1,7 +1,7 @@
 import { createPostsForUsers, createStrangerPool, ensureHomepage } from '../npc-factory.js';
 import { bindPullToRefresh, ptrMarkup } from '../pull-refresh.js';
 import { injectAddFriend, injectFeedRefresh } from '../story-inject.js';
-import { avatarGradient, escapeHtml, relativeTime, toast } from '../utils.js';
+import { avatarGradient, escapeHtml, normalizeGender, relativeTime, toast } from '../utils.js';
 
 export class HomeView {
     /**
@@ -14,23 +14,22 @@ export class HomeView {
         this.refreshing = false;
     }
 
-    async refreshFeed({ premium = false } = {}) {
+    async refreshFeed() {
         if (this.refreshing) return;
         this.refreshing = true;
-        toast(premium ? '精选刷新：AI 取名中…' : '正在刷新附近异性动态…', 'info');
         const store = this.app.store;
         const profile = store.getProfile();
         try {
             const strangers = await createStrangerPool(profile, 6, {
                 parallel: true,
-                preferFast: !premium,
+                preferFast: true,
             });
             store.setStrangers(strangers);
-            const friendPosts = createPostsForUsers(store.getFriends(), true);
-            const strangerPosts = createPostsForUsers(strangers, false);
+            const friendPosts = await createPostsForUsers(store.getFriends(), true);
+            const strangerPosts = await createPostsForUsers(strangers, false);
             store.replacePosts([...friendPosts, ...strangerPosts]);
             await injectFeedRefresh(strangerPosts.length);
-            toast(premium ? '精选动态已更新' : '已刷新附近动态', 'success');
+            toast('已刷新附近动态', 'success');
         } catch (e) {
             console.error(e);
             toast('刷新失败', 'error');
@@ -58,7 +57,7 @@ export class HomeView {
             <section class="mm-page mm-home mm-page-enter">
                 <header class="mm-topbar">
                     <div class="mm-brand">陌陌</div>
-                    <button type="button" class="mm-link" data-action="premium-refresh" title="AI 精选刷新">精选</button>
+                    <span class="mm-muted">下拉刷新</span>
                 </header>
                 <div class="mm-subtabs">
                     ${tab('nearby', '附近')}
@@ -76,6 +75,8 @@ export class HomeView {
 
     _postCard(post) {
         const isFriend = this.app.store.isFriend(post.authorId) || post.isFriend;
+        const gender = normalizeGender(post.authorGender);
+        const ageClass = gender === 'female' ? 'is-female' : 'is-male';
         return `
             <article class="mm-card mm-post" data-author-id="${escapeHtml(post.authorId)}">
                 <div class="mm-post-head">
@@ -83,7 +84,7 @@ export class HomeView {
                     <div class="mm-post-meta">
                         <div class="mm-name-row">
                             <button type="button" class="mm-name-link" data-action="open-profile" data-id="${escapeHtml(post.authorId)}"><strong>${escapeHtml(post.authorName)}</strong></button>
-                            <span class="mm-chip">${post.authorAge || '?'}</span>
+                            <span class="mm-chip mm-age ${ageClass}" title="${gender === 'female' ? '女' : '男'}">${post.authorAge || '?'}</span>
                             <span class="mm-muted">${escapeHtml(post.authorCity || '')}</span>
                         </div>
                         <div class="mm-muted">${escapeHtml(post.distance || '')} · ${relativeTime(post.createdAt)}</div>
@@ -108,11 +109,7 @@ export class HomeView {
         this._ptrDispose?.();
         const scroll = root.querySelector('#mm-home-scroll');
         this._ptrDispose = bindPullToRefresh(scroll, {
-            onRefresh: () => this.refreshFeed({ premium: false }),
-        });
-
-        root.querySelector('[data-action="premium-refresh"]')?.addEventListener('click', () => {
-            this.refreshFeed({ premium: true });
+            onRefresh: () => this.refreshFeed(),
         });
 
         root.querySelectorAll('[data-filter]').forEach((btn) => {

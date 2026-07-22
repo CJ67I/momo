@@ -25,6 +25,9 @@ function emptyState() {
             autoReply: true,
             useAiReply: true,
             useAiNames: true,
+            useAiFeed: false,
+            feedPrompt: '',
+            feedTemplates: '',
             storyInject: false,
             worldbookEnabled: true,
             worldbookSelected: [], // legacy global fallback

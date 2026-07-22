@@ -1,4 +1,5 @@
 import { canUseTavernApi, generateModernNickname, localModernNickname } from './ai-names.js';
+import { resolvePostTexts } from './feed-content.js';
 import { normalizeGender, oppositeGender, pick, uid } from './utils.js';
 
 const CITIES = ['上海', '北京', '杭州', '成都', '深圳', '广州', '南京', '武汉', '重庆', '苏州', '厦门', '长沙', '西安', '青岛'];
@@ -23,19 +24,6 @@ const ABOUTS = [
     '把日子过成自己喜欢的样子就好。',
 ];
 
-const POST_TEXTS = [
-    '今天路过的晚霞也太会了',
-    '一个人吃火锅也挺幸福的，就是辣椒有点叛逆',
-    '新开的咖啡店拉花意外地稳',
-    '加班到现在，月亮都比我清醒',
-    '周末计划：睡到自然醒，然后继续睡',
-    '刷到一只超像我家猫的流浪猫，心动了三秒',
-    '刚结束一场很舒服的散步',
-    '突然很想听雨，于是打开白噪音假装下雨',
-    '有没有人推荐附近不踩雷的小馆？',
-    '今日份情绪：轻微兴奋，持续观望',
-];
-
 const MOMENT_TEXTS = [
     '打卡一家安静的小店',
     '夜跑 5km，心情回血',
@@ -43,6 +31,8 @@ const MOMENT_TEXTS = [
     '窗外下雨，适合发呆',
     '和朋友约了周末看展',
 ];
+
+// POST_TEXTS moved to feed-content.js (user-editable templates)
 
 function randomAge() {
     return 18 + Math.floor(Math.random() * 14);
@@ -192,8 +182,16 @@ export async function createStrangerPool(profile, count = 8, opts = {}) {
     return list.filter((u) => normalizeGender(u.gender) === target);
 }
 
-export function createPostsForUsers(users, asFriend = false) {
-    return users.map((user) => ({
+export async function createPostsForUsers(users, asFriend = false) {
+    const list = users || [];
+    let settings = null;
+    try {
+        settings = window.SillyTavern?.getContext?.()?.extensionSettings?.['st-momo']?.settings || null;
+    } catch {
+        settings = null;
+    }
+    const texts = await resolvePostTexts(list, settings);
+    return list.map((user, i) => ({
         id: uid('post'),
         authorId: user.id,
         authorName: user.nickname,
@@ -202,7 +200,7 @@ export function createPostsForUsers(users, asFriend = false) {
         authorGender: user.gender,
         avatarText: user.avatarText,
         distance: user.distance,
-        text: pick(POST_TEXTS),
+        text: texts[i] || '今天也想随便发点什么',
         likes: Math.floor(Math.random() * 40),
         comments: Math.floor(Math.random() * 12),
         createdAt: Date.now() - Math.floor(Math.random() * 1000 * 60 * 60 * 36),

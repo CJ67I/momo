@@ -73,7 +73,7 @@ export class MomoApp {
         try {
             const strangers = await createStrangerPool(profile, 6);
             this.store.setStrangers(strangers);
-            this.store.upsertPosts(createPostsForUsers(strangers, false));
+            this.store.upsertPosts(await createPostsForUsers(strangers, false));
         } catch (e) {
             console.warn('[st-momo] seed failed', e);
         }
@@ -85,8 +85,8 @@ export class MomoApp {
         const profile = this.store.getProfile();
         const strangers = await createStrangerPool(profile, 6);
         this.store.setStrangers(strangers);
-        const friendPosts = createPostsForUsers(this.store.getFriends(), true);
-        const strangerPosts = createPostsForUsers(strangers, false);
+        const friendPosts = await createPostsForUsers(this.store.getFriends(), true);
+        const strangerPosts = await createPostsForUsers(strangers, false);
         this.store.replacePosts([...friendPosts, ...strangerPosts]);
     }
 

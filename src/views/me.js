@@ -1,4 +1,5 @@
 import { canUseTavernApi } from '../ai.js';
+import { DEFAULT_FEED_PROMPT, DEFAULT_FEED_TEMPLATES } from '../feed-content.js';
 import { createNpcFromCharacter } from '../npc-factory.js';
 import {
     getApiStatus,
@@ -132,6 +133,28 @@ export class MeView {
                     <div class="mm-muted" id="mm-wb-test-result" style="margin-top:8px;font-size:12px;white-space:pre-wrap"></div>
                 </div>
 
+                <div class="mm-card mm-bridge-card">
+                    <h3>动态内容生成</h3>
+                    <p class="mm-muted" style="margin:0 0 8px;font-size:12px;line-height:1.5">
+                        可用占位符：<code>{{nickname}}</code> <code>{{age}}</code> <code>{{city}}</code>
+                        <code>{{gender}}</code> <code>{{tag}}</code> <code>{{bio}}</code>
+                    </p>
+                    <label class="mm-switch" style="margin-bottom:8px">
+                        <span>用 AI 按提示词生成动态</span>
+                        <input type="checkbox" id="mm-ai-feed" ${settings.useAiFeed ? 'checked' : ''} />
+                    </label>
+                    <label class="mm-field-label">提示词（AI）
+                        <textarea id="mm-feed-prompt" rows="4" placeholder="${escapeHtml(DEFAULT_FEED_PROMPT)}">${escapeHtml(settings.feedPrompt || '')}</textarea>
+                    </label>
+                    <label class="mm-field-label">模版（每行一条，本地随机 / AI 失败回退）
+                        <textarea id="mm-feed-templates" rows="6" placeholder="${escapeHtml(DEFAULT_FEED_TEMPLATES.join('\n'))}">${escapeHtml(settings.feedTemplates || '')}</textarea>
+                    </label>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+                        <button type="button" class="mm-btn" data-action="feed-save">保存动态设定</button>
+                        <button type="button" class="mm-btn mm-btn-ghost" data-action="feed-reset">恢复默认</button>
+                    </div>
+                </div>
+
                 <form class="mm-form" id="mm-profile-form">
                     <label>昵称<input name="nickname" value="${escapeHtml(p.nickname)}" maxlength="16" required /></label>
                     <label>年龄<input name="age" type="number" min="18" max="60" value="${Number(p.age) || 22}" required /></label>
@@ -234,6 +257,25 @@ export class MeView {
         root.querySelector('#mm-story-inject')?.addEventListener('change', (e) => {
             this.app.store.updateSettings({ storyInject: e.target.checked });
             toast(e.target.checked ? '已开启线下模式' : '已关闭线下模式', 'info');
+        });
+        root.querySelector('#mm-ai-feed')?.addEventListener('change', (e) => {
+            this.app.store.updateSettings({ useAiFeed: e.target.checked });
+        });
+        root.querySelector('[data-action="feed-save"]')?.addEventListener('click', () => {
+            const prompt = String(root.querySelector('#mm-feed-prompt')?.value || '');
+            const templates = String(root.querySelector('#mm-feed-templates')?.value || '');
+            const useAiFeed = Boolean(root.querySelector('#mm-ai-feed')?.checked);
+            this.app.store.updateSettings({ feedPrompt: prompt, feedTemplates: templates, useAiFeed });
+            toast('动态生成设定已保存', 'success');
+        });
+        root.querySelector('[data-action="feed-reset"]')?.addEventListener('click', () => {
+            this.app.store.updateSettings({
+                feedPrompt: DEFAULT_FEED_PROMPT,
+                feedTemplates: DEFAULT_FEED_TEMPLATES.join('\n'),
+                useAiFeed: false,
+            });
+            toast('已恢复默认动态模版', 'info');
+            this.app.render('me');
         });
         root.querySelector('#mm-wb-enabled')?.addEventListener('change', (e) => {
             this.app.store.updateSettings({ worldbookEnabled: e.target.checked });

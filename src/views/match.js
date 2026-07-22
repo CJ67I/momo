@@ -5,6 +5,7 @@ import { avatarGradient, escapeHtml, normalizeGender, oppositeGender, toast } fr
 
 const QUEUE_SIZE = 8;
 const LOW_WATER = 3;
+const SWIPE_MS = 360;
 
 export class MatchView {
     /**
@@ -36,16 +37,15 @@ export class MatchView {
         this.loading = false;
     }
 
-    async refillQueue({ replace = false, premium = false } = {}) {
+    async refillQueue({ replace = false } = {}) {
         if (this.loading) return;
         this.loading = true;
-        // 空队列时重绘显示加载态；有卡片时保留 DOM（下拉刷新动画不被打断）
         if (!this.queue.length && this.app.tab === 'match' && this.app.stackPage == null) {
             this.app.render('match');
         }
         try {
             const batch = await createStrangerPool(this.app.store.getProfile(), QUEUE_SIZE, {
-                preferFast: !premium,
+                preferFast: true,
                 parallel: true,
             });
             const valid = batch.filter((u) => this._isValid(u));
@@ -55,12 +55,7 @@ export class MatchView {
                 .filter((u, i, arr) => arr.findIndex((x) => x.id === u.id) === i)
                 .slice(0, 30);
             this.app.store.setStrangers(merged);
-            toast(
-                premium
-                    ? `精选 ${valid.length} 人（AI 网名）`
-                    : (replace ? `已刷新 ${valid.length} 位异性` : `已补充 ${valid.length} 位`),
-                'success',
-            );
+            toast(replace ? `已刷新 ${valid.length} 位异性` : `已补充 ${valid.length} 位`, 'success');
         } catch (e) {
             console.error(e);
             toast('匹配池刷新失败', 'error');
@@ -74,13 +69,13 @@ export class MatchView {
 
     ensureQueue() {
         if (this.queue.length > 0 || this.loading) return;
-        this.refillQueue({ replace: true, premium: false });
+        this.refillQueue({ replace: true });
     }
 
     advance() {
         if (this.queue.length) this.queue.shift();
         if (this.queue.length < LOW_WATER && !this.loading) {
-            this.refillQueue({ replace: false, premium: false });
+            this.refillQueue({ replace: false });
         }
         this.app.render('match');
     }
@@ -95,7 +90,7 @@ export class MatchView {
                 <section class="mm-page mm-match mm-page-enter">
                     <header class="mm-topbar">
                         <div class="mm-brand">匹配</div>
-                        <button type="button" class="mm-link" data-action="premium-refresh">精选</button>
+                        <span class="mm-muted">下拉刷新</span>
                     </header>
                     <div class="mm-match-scroll mm-scroll" id="mm-match-scroll">
                         ${ptrMarkup()}
@@ -110,16 +105,14 @@ export class MatchView {
 
         const tags = (c.tags || []).map((t) => `<span class="mm-tag">${escapeHtml(t)}</span>`).join('');
         const genderLabel = normalizeGender(c.gender) === 'female' ? '女' : '男';
+        const ageClass = normalizeGender(c.gender) === 'female' ? 'is-female' : 'is-male';
         const stackPreview = this.queue.slice(1, 4);
 
         return `
             <section class="mm-page mm-match mm-page-enter">
                 <header class="mm-topbar">
                     <div class="mm-brand">匹配</div>
-                    <div class="mm-match-meta">
-                        <span class="mm-muted">队列 ${this.queue.length}</span>
-                        <button type="button" class="mm-link" data-action="premium-refresh" title="AI 精选一批">精选</button>
-                    </div>
+                    <span class="mm-muted">队列 ${this.queue.length}</span>
                 </header>
                 <div class="mm-match-scroll mm-scroll" id="mm-match-scroll">
                     ${ptrMarkup()}
@@ -133,7 +126,7 @@ export class MatchView {
                                 <div class="mm-match-online ${c.online ? 'is-on' : ''}">${c.online ? '在线' : '刚刚来过'}</div>
                             </div>
                             <div class="mm-match-body">
-                                <h2>${escapeHtml(c.nickname)} <small>${c.age}</small></h2>
+                                <h2>${escapeHtml(c.nickname)} <span class="mm-chip mm-age ${ageClass}">${c.age}</span></h2>
                                 <p class="mm-muted">${escapeHtml(c.city)} · ${escapeHtml(genderLabel)} · ${escapeHtml(c.distance || '')}</p>
                                 <p class="mm-match-bio">${escapeHtml(c.bio)}</p>
                                 <div class="mm-tags">${tags}</div>
@@ -157,12 +150,7 @@ export class MatchView {
 
         const scroll = root.querySelector('#mm-match-scroll');
         this._ptrDispose = bindPullToRefresh(scroll, {
-            onRefresh: () => this.refillQueue({ replace: true, premium: false }),
-        });
-
-        root.querySelector('[data-action="premium-refresh"]')?.addEventListener('click', () => {
-            if (this.loading) return;
-            this.refillQueue({ replace: true, premium: true });
+            onRefresh: () => this.refillQueue({ replace: true }),
         });
 
         root.querySelector('[data-action="pass"]')?.addEventListener('click', () => {
@@ -203,16 +191,32 @@ export class MatchView {
         let startY = 0;
         let dx = 0;
         let active = false;
+        let locked = false;
 
         const likeStamp = card.querySelector('.mm-stamp-like');
         const nopeStamp = card.querySelector('.mm-stamp-nope');
+        const stage = card.closest('.mm-match-stage');
 
         const reset = () => {
-            card.style.transition = 'transform .2s ease, opacity .2s ease';
+            card.style.transition = 'transform .22s ease, opacity .22s ease, filter .22s ease';
             card.style.transform = '';
             card.style.opacity = '';
+            card.style.filter = '';
+            card.classList.remove('is-dragging');
             if (likeStamp) likeStamp.style.opacity = '0';
             if (nopeStamp) nopeStamp.style.opacity = '0';
+            stage?.classList.remove('is-swiping');
+        };
+
+        const paint = (x) => {
+            const rot = x / 16;
+            const fade = Math.max(0.28, 1 - Math.abs(x) / 240);
+            const blur = Math.min(2.2, Math.abs(x) / 140);
+            card.style.transform = `translateX(${x}px) rotate(${rot}deg) scale(${1 - Math.abs(x) / 1800})`;
+            card.style.opacity = String(fade);
+            card.style.filter = blur > 0.35 ? `blur(${blur}px)` : '';
+            if (likeStamp) likeStamp.style.opacity = String(Math.min(1, Math.max(0, x / 80)));
+            if (nopeStamp) nopeStamp.style.opacity = String(Math.min(1, Math.max(0, -x / 80)));
         };
 
         const onDown = (e) => {
@@ -222,7 +226,9 @@ export class MatchView {
             startY = t.clientY;
             dx = 0;
             active = true;
+            locked = false;
             card.style.transition = 'none';
+            card.classList.add('is-dragging');
         };
 
         const onMove = (e) => {
@@ -230,28 +236,30 @@ export class MatchView {
             const t = e.touches?.[0] || e;
             const mx = t.clientX - startX;
             const my = t.clientY - startY;
-            if (Math.abs(my) > Math.abs(mx) && Math.abs(my) > 10) {
-                // vertical scroll / pull refresh wins
-                active = false;
-                reset();
-                return;
+            if (!locked) {
+                if (Math.abs(my) > Math.abs(mx) && Math.abs(my) > 10) {
+                    active = false;
+                    reset();
+                    return;
+                }
+                if (Math.abs(mx) > 8) {
+                    locked = true;
+                    stage?.classList.add('is-swiping');
+                }
             }
             dx = mx;
-            const rot = dx / 18;
-            card.style.transform = `translateX(${dx}px) rotate(${rot}deg)`;
-            if (likeStamp) likeStamp.style.opacity = String(Math.min(1, Math.max(0, dx / 90)));
-            if (nopeStamp) nopeStamp.style.opacity = String(Math.min(1, Math.max(0, -dx / 90)));
-            if (Math.abs(dx) > 12) e.preventDefault?.();
+            paint(dx);
+            if (locked) e.preventDefault?.();
         };
 
         const onUp = () => {
             if (!active) return;
             active = false;
-            if (dx > 96) {
+            if (dx > 88) {
                 this._likeCurrent();
                 return;
             }
-            if (dx < -96) {
+            if (dx < -88) {
                 this._swipe('left', () => this.advance());
                 return;
             }
@@ -279,16 +287,21 @@ export class MatchView {
 
     _swipe(dir, done) {
         const card = document.getElementById('mm-match-card');
+        const stage = card?.closest('.mm-match-stage');
         if (!card) {
             done();
             return;
         }
         this.animating = true;
-        card.style.transition = 'transform .28s ease, opacity .28s ease';
+        stage?.classList.add('is-swiping');
+        card.classList.add('is-leaving');
+        card.style.transition = `transform ${SWIPE_MS}ms cubic-bezier(0.2, 0.7, 0.2, 1), opacity ${SWIPE_MS}ms ease, filter ${SWIPE_MS}ms ease`;
+        // force paint then apply exit
+        void card.offsetWidth;
         card.classList.add(dir === 'left' ? 'swipe-left' : 'swipe-right');
         setTimeout(() => {
             this.animating = false;
             done();
-        }, 280);
+        }, SWIPE_MS);
     }
 }

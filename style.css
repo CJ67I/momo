@@ -296,6 +296,7 @@ body.st-momo-scroll-lock {
 
 /* Pull to refresh */
 .mm-ptr {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -312,12 +313,25 @@ body.st-momo-scroll-lock {
 }
 
 .mm-ptr.is-visible {
-    height: 44px;
+    height: 48px;
     opacity: 1;
     margin-bottom: 4px;
 }
 
+.mm-ptr-halo {
+    position: absolute;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: rgba(47, 140, 255, 0.18);
+    opacity: 0;
+    transform: scale(0.6);
+    pointer-events: none;
+}
+
 .mm-ptr-icon {
+    position: relative;
+    z-index: 1;
     display: inline-grid;
     place-items: center;
     width: 28px;
@@ -326,7 +340,7 @@ body.st-momo-scroll-lock {
     background: var(--mm-blue-soft);
     color: var(--mm-blue);
     font-size: 16px;
-    transition: transform 0.08s linear, background 0.15s ease;
+    transition: transform 0.08s linear, background 0.15s ease, box-shadow 0.2s ease;
 }
 
 .mm-ptr.is-armed .mm-ptr-icon {
@@ -334,13 +348,21 @@ body.st-momo-scroll-lock {
     color: #fff;
 }
 
-.mm-ptr.is-refreshing .mm-ptr-icon {
+.mm-ptr.is-refreshing .mm-ptr-icon,
+.mm-ptr.is-hovering .mm-ptr-icon {
     animation: mm-ptr-spin 0.7s linear infinite;
     background: var(--mm-blue);
     color: #fff;
+    box-shadow: 0 6px 16px rgba(47, 140, 255, 0.35);
 }
 
-.mm-ptr.is-refreshing .mm-ptr-label {
+.mm-ptr.is-hovering .mm-ptr-halo {
+    opacity: 1;
+    animation: mm-ptr-halo 1.1s ease-out infinite;
+}
+
+.mm-ptr.is-refreshing .mm-ptr-label,
+.mm-ptr.is-hovering .mm-ptr-label {
     animation: mm-ptr-pulse 1s ease-in-out infinite;
 }
 
@@ -349,6 +371,12 @@ body.st-momo-scroll-lock {
     color: var(--mm-muted);
     font-size: 11px;
     padding: 10px 0 4px;
+}
+
+.mm-feed.is-ptr-hovering,
+.mm-match-scroll.is-ptr-hovering {
+    animation: mm-ptr-float 1.15s ease-in-out infinite;
+    will-change: transform;
 }
 
 .mm-card {
@@ -406,6 +434,16 @@ body.st-momo-scroll-lock {
     border-radius: 999px;
     background: var(--mm-blue-soft);
     color: var(--mm-blue-deep);
+}
+
+.mm-chip.mm-age.is-female {
+    background: #ffe4ef;
+    color: #e85a8a;
+}
+
+.mm-chip.mm-age.is-male {
+    background: #e8f3ff;
+    color: #1a6fe0;
 }
 
 .mm-muted {
@@ -504,13 +542,30 @@ body.st-momo-scroll-lock {
 }
 
 .mm-match-card.swipe-left {
-    transform: translateX(-120%) rotate(-8deg);
-    opacity: 0;
+    transform: translateX(-128%) rotate(-14deg) scale(0.9) !important;
+    opacity: 0 !important;
+    filter: blur(3px) !important;
 }
 
 .mm-match-card.swipe-right {
-    transform: translateX(120%) rotate(8deg);
-    opacity: 0;
+    transform: translateX(128%) rotate(14deg) scale(0.9) !important;
+    opacity: 0 !important;
+    filter: blur(3px) !important;
+}
+
+.mm-match-card.is-dragging {
+    cursor: grabbing;
+    box-shadow: 0 18px 40px rgba(47, 140, 255, 0.22);
+}
+
+.mm-match-card.is-leaving {
+    pointer-events: none;
+}
+
+.mm-match-stage.is-swiping .mm-match-stack.s1 {
+    transform: scale(0.98) translateY(4px);
+    opacity: 0.9;
+    transition: transform .28s ease, opacity .28s ease;
 }
 
 .mm-match-cover {
@@ -555,6 +610,10 @@ body.st-momo-scroll-lock {
 .mm-match-body h2 {
     margin: 0;
     font-size: 24px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
 }
 
 .mm-match-body h2 small,
@@ -759,6 +818,35 @@ body.st-momo-scroll-lock {
     font: inherit;
     font-size: 16px;
     background: var(--mm-bg);
+}
+
+.mm-field-label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 10px;
+    font-size: 13px;
+    color: #444;
+}
+
+.mm-field-label textarea {
+    border: 1px solid var(--mm-line);
+    border-radius: 12px;
+    padding: 10px 12px;
+    font: inherit;
+    font-size: 14px;
+    line-height: 1.45;
+    background: var(--mm-bg);
+    resize: vertical;
+    min-height: 72px;
+}
+
+.mm-bridge-card code {
+    font-size: 11px;
+    background: var(--mm-blue-soft);
+    color: var(--mm-blue-deep);
+    padding: 1px 5px;
+    border-radius: 4px;
 }
 
 .mm-switch {
@@ -1188,6 +1276,17 @@ body.st-momo-scroll-lock {
 @keyframes mm-ptr-pulse {
     0%, 100% { opacity: 0.65; }
     50% { opacity: 1; }
+}
+
+@keyframes mm-ptr-float {
+    0%, 100% { transform: translateY(52px); }
+    50% { transform: translateY(58px); }
+}
+
+@keyframes mm-ptr-halo {
+    0% { transform: scale(0.7); opacity: 0.55; }
+    70% { transform: scale(1.55); opacity: 0; }
+    100% { transform: scale(1.55); opacity: 0; }
 }
 
 @keyframes mm-fade-up {
