@@ -1,5 +1,4 @@
 import { canUseTavernApi, generateModernNickname, localModernNickname } from './ai-names.js';
-import { resolvePostTexts } from './feed-content.js';
 import { getVirtualNow } from './time.js';
 import { normalizeGender, oppositeGender, uid } from './utils.js';
 
@@ -161,6 +160,8 @@ export async function createStrangerPool(profile, count = 8, opts = {}) {
 }
 
 /**
+ * @deprecated Home feeds use batch APIs in feed-refresh.js.
+ * Kept for rare callers — builds posts without AI text.
  * @param {object[]} users
  * @param {boolean|{ asFriend?: boolean, channel?: 'recommend'|'nearby'|'friends' }} [opts]
  */
@@ -176,31 +177,24 @@ export async function createPostsForUsers(users, opts = false) {
         settings = null;
     }
     const now = getVirtualNow(settings || {});
-    const texts = await resolvePostTexts(list, settings, { channel });
 
-    return list.map((user, i) => {
-        const text = texts[i];
-        const failed = !text;
-        return {
-            id: uid('post'),
-            channel,
-            authorId: user.id,
-            authorName: user.nickname,
-            authorAge: user.age,
-            authorCity: user.city,
-            authorGender: user.gender,
-            avatarText: user.avatarText,
-            distance: user.distance,
-            text: failed
-                ? `（${user.nickname} 的动态生成失败 #${i + 1}：请确认酒馆 API 在线）`
-                : text,
-            genFailed: failed,
-            likes: Math.floor(Math.random() * 40),
-            comments: Math.floor(Math.random() * 12),
-            createdAt: now - Math.floor(Math.random() * 1000 * 60 * 60 * 18),
-            isFriend: Boolean(asFriend || user.isFriend),
-        };
-    });
+    return list.map((user, i) => ({
+        id: uid('post'),
+        channel,
+        authorId: user.id,
+        authorName: user.nickname,
+        authorAge: user.age,
+        authorCity: user.city,
+        authorGender: user.gender,
+        avatarText: user.avatarText,
+        distance: user.distance,
+        text: `（${user.nickname} 的动态待刷新）`,
+        genFailed: true,
+        likes: Math.floor(Math.random() * 40),
+        comments: Math.floor(Math.random() * 12),
+        createdAt: now - Math.floor(Math.random() * 1000 * 60 * 60 * 18),
+        isFriend: Boolean(asFriend || user.isFriend),
+    }));
 }
 
 export async function createMatchCandidate(profile) {

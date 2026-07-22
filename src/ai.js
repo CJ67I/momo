@@ -22,11 +22,68 @@ export function canUseTavernApi() {
     return Boolean(s.available && s.hasGenerateRaw && s.online);
 }
 
+function sleep(ms) {
+    return new Promise((r) => setTimeout(r, ms));
+}
+
 /**
- * Generate NPC reply via SillyTavern generateRaw, injecting
- * persona / character / world info / main chat history.
+ * Parse model output into 1–4 short chat bubbles.
+ * Accepts JSON array, ||| separators, or numbered lines.
+ * @param {string} raw
+ * @returns {string[]}
  */
-export async function generateNpcReply(opts) {
+export function parseReplyBubbles(raw) {
+    const s = String(raw || '').trim();
+    if (!s) return [];
+
+    // JSON array
+    const arrStart = s.indexOf('[');
+    const arrEnd = s.lastIndexOf(']');
+    if (arrStart >= 0 && arrEnd > arrStart) {
+        try {
+            const data = JSON.parse(s.slice(arrStart, arrEnd + 1));
+            if (Array.isArray(data)) {
+                const list = data
+                    .map((x) => String(x ?? '').trim())
+                    .map((t) => t.replace(/^["「『]|["」』]$/g, ''))
+                    .filter((t) => t.length >= 1)
+                    .slice(0, 4);
+                if (list.length) return list.map((t) => t.slice(0, 120));
+            }
+        } catch {
+            /* fall through */
+        }
+    }
+
+    if (s.includes('|||')) {
+        const list = s.split('|||').map((t) => t.trim()).filter(Boolean).slice(0, 4);
+        if (list.length) return list.map((t) => t.slice(0, 120));
+    }
+
+    // Numbered / multi-line short bubbles
+    const lines = s
+        .split(/[\n\r]+/)
+        .map((line) => line.replace(/^\s*[-*]?\s*\d+[\.\)、]\s*/, '').trim())
+        .map((t) => t.replace(/^["「『]|["」』]$/g, ''))
+        .filter((t) => t.length >= 1 && !/^(回复|输出|json)/i.test(t));
+
+    if (lines.length >= 2 && lines.every((t) => t.length <= 80)) {
+        return lines.slice(0, 4).map((t) => t.slice(0, 120));
+    }
+
+    const one = s
+        .replace(/^["「『]|["」』]$/g, '')
+        .replace(/^(回复|答|作为[^:：]+)[:：]\s*/i, '')
+        .trim();
+    return one ? [one.slice(0, 240)] : [];
+}
+
+/**
+ * Generate NPC reply bubble(s) via SillyTavern generateRaw.
+ * Returns an array of 1–4 message strings.
+ * @returns {Promise<string[]>}
+ */
+export async function generateNpcReplies(opts) {
     const { peer, history, userText, myProfile, useAi = true } = opts;
 
     if (useAi) {
@@ -44,14 +101,18 @@ export async function generateNpcReply(opts) {
                 const loreBlock = formatContextForPrompt(bundle);
 
                 const momoRecent = (history || [])
-                    .slice(-10)
+                    .slice(-12)
                     .map((m) => `${m.from === 'me' ? (myProfile.nickname || bundle.persona.name || '玩家') : peer.nickname}: ${m.text}`)
                     .join('\n');
 
                 const systemPrompt = [
                     '你正在「陌陌」社交 App 里扮演一位真实用户，与玩家私聊。',
-                    '用口语化中文回复，1-3 句，像真人发消息，不要旁白、不要引号、不要 OOC 说明。',
-                    '可以自然地引用世界书与角色设定中的信息，但不要生硬背设定。',
+                    '像真人微信/陌陌聊天：可一次回 1 条，也可连发 2–4 条短消息（拆开更自然）。',
+                    '规则：',
+                    '- 只输出 JSON 字符串数组，例如 ["哈哈哈","你明天有空吗"]',
+                    '- 每条很短口语，不要旁白、不要引号包裹整段、不要 OOC 说明',
+                    '- 简单招呼 → 通常 1 条；兴奋/解释/追问 → 2–3 条；少用 4 条',
+                    '- 可以自然引用世界书与角色设定，但不要生硬背设定',
                     '',
                     `【你的陌陌资料】`,
                     `昵称：${peer.nickname}；年龄：${peer.age}；城市：${peer.city}；性别：${peer.gender === 'female' ? '女' : '男'}`,
@@ -70,7 +131,7 @@ export async function generateNpcReply(opts) {
                     '【陌陌私聊最近记录】',
                     momoRecent || '(无)',
                     `玩家刚说：${userText}`,
-                    '请以陌陌用户身份回复：',
+                    '请输出 JSON 字符串数组作为回复（1–4 条）：',
                 ].join('\n');
 
                 let result;
@@ -78,18 +139,14 @@ export async function generateNpcReply(opts) {
                     result = await generateRaw({
                         systemPrompt,
                         prompt,
-                        responseLength: 180,
+                        responseLength: 280,
                     });
                 } catch {
                     result = await generateRaw(`${systemPrompt}\n\n${prompt}`);
                 }
 
-                const text = String(result || '')
-                    .trim()
-                    .replace(/^["「『]|["」』]$/g, '')
-                    .replace(/^(回复|答|作为[^:：]+)[:：]\s*/i, '');
-
-                if (text) return text.slice(0, 240);
+                const bubbles = parseReplyBubbles(result);
+                if (bubbles.length) return bubbles;
             } else if (typeof generateRaw === 'function' && !status.online) {
                 console.warn('[st-momo] ST API offline, using fallback reply');
             }
@@ -98,5 +155,31 @@ export async function generateNpcReply(opts) {
         }
     }
 
-    return pick(FALLBACK_REPLIES);
+    return [pick(FALLBACK_REPLIES)];
+}
+
+/**
+ * Backward-compatible single-string reply (joins bubbles with space if needed).
+ * Prefer generateNpcReplies for chat UI.
+ */
+export async function generateNpcReply(opts) {
+    const list = await generateNpcReplies(opts);
+    return list[0] || pick(FALLBACK_REPLIES);
+}
+
+/**
+ * Append NPC bubbles one-by-one with light delay (natural multi-message).
+ * @param {(text: string, index: number) => void|Promise<void>} onBubble
+ * @param {string[]} bubbles
+ */
+export async function deliverBubbles(bubbles, onBubble) {
+    const list = (bubbles || []).filter(Boolean);
+    for (let i = 0; i < list.length; i++) {
+        // eslint-disable-next-line no-await-in-loop
+        await onBubble(list[i], i);
+        if (i < list.length - 1) {
+            // eslint-disable-next-line no-await-in-loop
+            await sleep(380 + Math.floor(Math.random() * 420));
+        }
+    }
 }

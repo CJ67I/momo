@@ -1,4 +1,4 @@
-import { canUseTavernApi, generateNpcReply } from '../ai.js';
+import { canUseTavernApi, deliverBubbles, generateNpcReplies } from '../ai.js';
 import { avatarGradient, escapeHtml, formatTime, toast, uid } from '../utils.js';
 
 export class ChatView {
@@ -96,7 +96,7 @@ export class ChatView {
                     <button type="button" class="mm-link mm-danger" data-action="delete-friend" data-id="${escapeHtml(peer.id)}">删除</button>
                 </header>
                 <div class="mm-thread" id="mm-thread">${bubbles}${this.sending ? '<div class="mm-typing">对方正在输入…</div>' : ''}</div>
-                <div class="mm-api-hint">${canUseTavernApi() ? '酒馆 API 已接入，将结合人设/世界书/聊天记录回复' : '酒馆 API 未在线，使用本地话术回复'}</div>
+                <div class="mm-api-hint">${canUseTavernApi() ? '酒馆 API 已接入；对方可按情境连发多条短消息' : '酒馆 API 未在线，使用本地话术回复'}</div>
                 <form class="mm-composer" id="mm-composer">
                     <input type="text" id="mm-chat-input" placeholder="说点什么…" maxlength="200" autocomplete="off" />
                     <button type="submit" class="mm-btn" ${this.sending ? 'disabled' : ''}>发送</button>
@@ -237,18 +237,28 @@ export class ChatView {
         this.sending = true;
         this.app.render('chat');
         try {
-            const reply = await generateNpcReply({
+            const bubbles = await generateNpcReplies({
                 peer,
                 history: this.app.store.getMessages(peer.id),
                 userText: text,
                 myProfile: this.app.store.getProfile(),
                 useAi: settings.useAiReply,
             });
-            this.app.store.appendMessage(peer.id, {
-                id: uid('msg'),
-                from: 'them',
-                text: reply,
-                createdAt: this.app.store.now(),
+
+            await deliverBubbles(bubbles, async (bubble) => {
+                if (this.activePeerId !== peer.id) {
+                    // User left thread — still persist remaining? persist all remaining silently
+                }
+                this.app.store.appendMessage(peer.id, {
+                    id: uid('msg'),
+                    from: 'them',
+                    text: bubble,
+                    createdAt: this.app.store.now(),
+                });
+                if (this.activePeerId === peer.id) {
+                    this.app.store.markRead(peer.id);
+                    this.app.render('chat');
+                }
             });
         } catch (err) {
             console.error(err);

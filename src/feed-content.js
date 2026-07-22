@@ -1,18 +1,26 @@
 /**
- * AI-only feed post generation by channel.
- * No local content template library — every post body comes from the tavern API.
+ * AI-only feed generation — batch-first (1 API call ≈ 8 posts).
+ * No local post-text libraries.
  */
 
 import { canUseTavernApi } from './ai.js';
-import { normalizeGender, uid } from './utils.js';
+import { normalizeGender, shuffle, uid } from './utils.js';
 
 export const FEED_CHANNELS = Object.freeze(['recommend', 'nearby', 'friends']);
 export const FEED_PAGE_SIZE = 8;
 
+/** City labels for recommend diversification (not post content). */
+export const CITY_POOL = Object.freeze([
+    '北京', '上海', '广州', '深圳', '杭州', '成都', '重庆', '武汉',
+    '南京', '苏州', '西安', '长沙', '郑州', '天津', '青岛', '厦门',
+    '宁波', '无锡', '合肥', '福州', '济南', '大连', '昆明', '沈阳',
+    '长春', '哈尔滨', '石家庄', '南昌', '贵阳', '南宁', '海口', '兰州',
+]);
+
 export const DEFAULT_FEED_PROMPT = [
     '你是中文社交 App「陌陌」动态文案生成器。',
-    '必须严格按人物信息与栏目约束创作一条全新短动态，像真人随手发出。',
-    '只输出动态正文：口语自然，18-48 字。',
+    '必须严格按人物信息与栏目约束创作全新短动态，像真人随手发出。',
+    '口语自然，每条 18-48 字。',
     '禁止引号、禁止解释、禁止复述设定、禁止鸡汤口号、禁止模板腔。',
     '内容要具体到场景细节，避免空泛的「今天天气真好」「又是普通的一天」。',
 ].join('\n');
@@ -31,11 +39,6 @@ export function getFeedContentSettings(settings = null) {
     return { prompt };
 }
 
-/**
- * @param {string} tpl
- * @param {object} user
- * @param {{ spice?: string }} [extra]
- */
 export function fillFeedPlaceholders(tpl, user, extra = {}) {
     const gender = normalizeGender(user?.gender) === 'female' ? '女' : '男';
     const tag = (user?.tags && user.tags[0]) || '';
@@ -56,197 +59,268 @@ function sanitizeFeedText(raw) {
         .replace(/^["'「」]|["'「」]$/g, '')
         .replace(/^\d+[\.\)、]\s*/, '')
         .split(/[\n\r]/)[0]
-        .replace(/^(动态|正文|内容)[:：]\s*/i, '')
+        .replace(/^(动态|正文|内容|text)\s*[:：]\s*/i, '')
         .trim()
         .slice(0, 96);
 }
 
-function tooSimilar(a, b) {
-    const x = String(a || '').replace(/\s+/g, '');
-    const y = String(b || '').replace(/\s+/g, '');
-    if (!x || !y) return false;
-    if (x === y) return true;
-    if (x.length >= 8 && y.includes(x.slice(0, 8))) return true;
-    if (y.length >= 8 && x.includes(y.slice(0, 8))) return true;
-    const grams = (s) => {
-        const set = new Set();
-        for (let i = 0; i < s.length - 1; i++) set.add(s.slice(i, i + 2));
-        return set;
-    };
-    const A = grams(x);
-    const B = grams(y);
-    let hit = 0;
-    A.forEach((g) => { if (B.has(g)) hit += 1; });
-    return hit / Math.max(A.size, 1) > 0.55;
+function sanitizeNickname(raw) {
+    return String(raw || '')
+        .replace(/["'「」『』【】\[\]()（）]/g, '')
+        .replace(/^(昵称|网名|名字|nickname)\s*[:：]\s*/i, '')
+        .split(/[\n\r|,，]/)[0]
+        .replace(/\s+/g, '')
+        .trim()
+        .slice(0, 16);
 }
 
-function channelRules(channel, user) {
-    const city = String(user?.city || '').trim() || '同城';
-    if (channel === 'nearby') {
-        return [
-            `栏目：附近 / 同城。城市必须是「${city}」。`,
-            `正文必须自然带出「${city}」同城生活感，并嵌入一个同城话题钩子（本地店、街区、活动、通勤槽点等），方便别人筛人。`,
-            '可以带一个短 #同城话题（不超过 8 字），不要写成旅游攻略。',
-        ].join('\n');
+function clampAge(n) {
+    const age = Number(n);
+    if (Number.isFinite(age) && age >= 18 && age <= 45) return Math.floor(age);
+    return 18 + Math.floor(Math.random() * 14);
+}
+
+/**
+ * Pick `count` distinct cities, optionally avoiding the user's city first.
+ * @param {number} count
+ * @param {string} [avoidCity]
+ */
+export function pickDistinctCities(count, avoidCity = '') {
+    const avoid = String(avoidCity || '').trim();
+    const pool = shuffle(CITY_POOL.filter((c) => c !== avoid));
+    const extra = avoid ? shuffle(CITY_POOL.filter((c) => c === avoid)) : [];
+    const merged = [...pool, ...extra];
+    const out = [];
+    for (const c of merged) {
+        if (out.length >= count) break;
+        if (!out.includes(c)) out.push(c);
     }
-    if (channel === 'friends') {
-        return [
-            '栏目：好友动态。你就是这位已加好友的用户本人在发动态。',
-            '语气、兴趣要贴合其简介/人设；像熟人刷到的更新，不要像广告。',
-            '不要提「附近」「同城推荐」等产品词。',
-        ].join('\n');
-    }
-    return [
-        '栏目：推荐。生成一条「可能与浏览者发生互动」的趣味动态。',
-        '要有互动钩子：提问、邀约、吐槽求接话、找搭子等，让人想点赞或私聊。',
-        '不要强调同城；城市可自然出现也可不出现。禁止鸡汤与空洞招呼。',
-    ].join('\n');
+    while (out.length < count) out.push(CITY_POOL[out.length % CITY_POOL.length]);
+    return out;
 }
 
-function buildSpice(channel, user, index, avoid) {
-    return [
-        `唯一编号 ${uid('postseed').slice(-6)}`,
-        `序号 ${index + 1}`,
-        channelRules(channel, user),
-        avoid.length
-            ? `绝对不要与下列已生成动态雷同或改写：\n- ${avoid.slice(-8).join('\n- ')}`
-            : '这是本批第一条，请写得具体、有画面、有互动感',
-    ].join('\n');
-}
-
-async function callGenerateRaw(systemPrompt, userPrompt) {
+async function callGenerateRaw(systemPrompt, userPrompt, responseLength = 900) {
     const ctx = window.SillyTavern?.getContext?.();
     const generateRaw = ctx?.generateRaw;
     if (typeof generateRaw !== 'function') return null;
     try {
-        return await generateRaw({ systemPrompt, prompt: userPrompt, responseLength: 120 });
+        return await generateRaw({ systemPrompt, prompt: userPrompt, responseLength });
     } catch {
         return generateRaw(`${systemPrompt}\n\n${userPrompt}`);
     }
 }
 
-/**
- * @param {object} user
- * @param {ReturnType<typeof getFeedContentSettings>} [cfg]
- * @param {{ avoid?: string[], index?: number, channel?: string }} [opts]
- */
-export async function resolvePostText(user, cfg = null, opts = {}) {
-    const settings = cfg || getFeedContentSettings();
-    const avoid = opts.avoid || [];
-    const index = opts.index || 0;
-    const channel = FEED_CHANNELS.includes(opts.channel) ? opts.channel : 'nearby';
-
-    if (!canUseTavernApi()) {
-        console.warn('[st-momo] feed requires online ST API');
-        return null;
-    }
-
+function extractJsonArray(raw) {
+    const s = String(raw || '').trim();
+    if (!s) return null;
+    const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    const body = fence ? fence[1].trim() : s;
+    const start = body.indexOf('[');
+    const end = body.lastIndexOf(']');
+    if (start < 0 || end <= start) return null;
     try {
-        const spice = buildSpice(channel, user, index, avoid);
-        const userPrompt = fillFeedPlaceholders(
-            `${settings.prompt || DEFAULT_FEED_PROMPT}\n\n【本条约束】\n{{spice}}\n\n人物：昵称 {{nickname}}；年龄 {{age}}；城市 {{city}}；性别 {{gender}}；简介 {{bio}}；标签 {{tag}}；人设摘要 {{persona}}。\n请直接输出一条动态：`,
-            user,
-            { spice },
-        );
-
-        const systemPrompt = [
-            '你只输出一条陌陌动态正文。',
-            '严禁输出多条、编号列表、解释、前后缀。',
-            '严禁套用万能模板；每条必须有不可替换的具体细节。',
-            '若提示词与「本条约束」冲突，以本条约束的栏目要求优先。',
-        ].join('\n');
-
-        let text = sanitizeFeedText(await callGenerateRaw(systemPrompt, userPrompt));
-        if (!text || text.length < 4) return null;
-
-        if (avoid.some((prev) => tooSimilar(text, prev))) {
-            const retryPrompt = `${userPrompt}\n\n上一条候选「${text}」与已有内容过像，请彻底换场景重写一条：`;
-            const alt = sanitizeFeedText(await callGenerateRaw(systemPrompt, retryPrompt));
-            if (alt && alt.length >= 4 && !avoid.some((prev) => tooSimilar(alt, prev))) {
-                text = alt;
-            }
-        }
-
-        return text;
-    } catch (e) {
-        console.warn('[st-momo] AI feed text failed', e);
+        const data = JSON.parse(body.slice(start, end + 1));
+        return Array.isArray(data) ? data : null;
+    } catch {
         return null;
     }
 }
 
 /**
- * Recommend tab: one API call invents author + interactive post (no local content pool).
- * @returns {Promise<{ nickname: string, age: number, city: string, bio: string, text: string, gender: string }|null>}
+ * Batch: recommend feed (random cities pre-assigned).
+ * @returns {Promise<object[]>}
  */
-export async function resolveRecommendCard(profile, opts = {}) {
-    if (!canUseTavernApi()) return null;
+export async function generateRecommendBatch(profile, count = FEED_PAGE_SIZE) {
+    if (!canUseTavernApi()) return [];
 
     const myGender = normalizeGender(profile?.gender);
     const targetGender = myGender === 'female' ? 'male' : 'female';
-    const avoid = opts.avoid || [];
-    const index = opts.index || 0;
     const myCity = String(profile?.city || '').trim();
+    const cities = pickDistinctCities(count, myCity);
+    const cfg = getFeedContentSettings();
 
     const systemPrompt = [
-        '你是陌陌「推荐」信息流生成器。',
-        '只输出一行 JSON，不要 markdown，不要解释。',
-        '字段：nickname, age, city, bio, text。',
-        'text 是动态正文（18-48 字），必须有互动钩子，像真人想找人聊天。',
-        '禁止本地模板腔、鸡汤、空洞招呼。',
+        '你是陌陌「推荐」信息流批量生成器。',
+        '只输出一个 JSON 数组，不要 markdown，不要解释。',
+        `必须正好 ${count} 个对象，字段：nickname, age, city, bio, text。`,
+        'text：18-48 字动态，必须有互动钩子（提问/邀约/吐槽求接话）。',
+        '每条 city 必须严格使用给定城市，禁止全部写成同一城，禁止抄浏览者城市除非名单里有。',
+        'nickname 要像真实网名，彼此不要雷同。',
     ].join('\n');
 
+    const slots = cities.map((city, i) => `${i + 1}. city 必须是「${city}」`).join('\n');
     const userPrompt = [
-        `浏览者：${profile?.nickname || '旅人'}，${myGender === 'female' ? '女' : '男'}，城市 ${myCity || '未知'}。`,
-        `请生成一名异性（${targetGender === 'female' ? '女' : '男'}）用户的推荐卡片。`,
-        `唯一编号 ${uid('rec').slice(-6)}；序号 ${index + 1}。`,
-        avoid.length ? `text 不要与下列雷同：\n- ${avoid.slice(-6).join('\n- ')}` : '',
-        'JSON 示例：{"nickname":"晚风不回消息","age":24,"city":"杭州","bio":"徒步爱好者","text":"有没有人周末想去爬附近小山，别只回哈哈"}',
-    ].filter(Boolean).join('\n');
+        cfg.prompt,
+        '',
+        `浏览者：${profile?.nickname || '旅人'}（${myGender === 'female' ? '女' : '男'}，住在 ${myCity || '未知'}）。`,
+        `生成 ${count} 名异性（${targetGender === 'female' ? '女' : '男'}）推荐卡片。`,
+        `唯一批次 ${uid('rec').slice(-6)}`,
+        '城市分配（必须遵守）：',
+        slots,
+        '输出示例：[{"nickname":"晚风不回消息","age":24,"city":"杭州","bio":"徒步","text":"周末有人想去爬山吗，别只回哈哈"}]',
+    ].join('\n');
 
-    try {
-        const raw = String(await callGenerateRaw(systemPrompt, userPrompt) || '').trim();
-        const jsonMatch = raw.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) return null;
-        const data = JSON.parse(jsonMatch[0]);
-        const text = sanitizeFeedText(data.text);
-        const nickname = String(data.nickname || '').trim().slice(0, 16);
-        if (!text || text.length < 4 || !nickname) return null;
-        if (avoid.some((prev) => tooSimilar(text, prev))) return null;
+    let rows = extractJsonArray(await callGenerateRaw(systemPrompt, userPrompt, 1200));
+    if (!rows?.length) {
+        rows = extractJsonArray(await callGenerateRaw(systemPrompt, `${userPrompt}\n\n上次未得到合法 JSON 数组，请重新只输出 JSON 数组：`, 1200));
+    }
+    if (!rows?.length) return [];
 
-        const age = Number(data.age);
-        return {
+    const out = [];
+    const usedNames = new Set();
+    for (let i = 0; i < count; i++) {
+        const row = rows[i] || {};
+        const nickname = sanitizeNickname(row.nickname) || `推荐用户${i + 1}`;
+        if (usedNames.has(nickname) && sanitizeNickname(row.nickname)) {
+            // keep anyway with suffix
+        }
+        usedNames.add(nickname);
+        const text = sanitizeFeedText(row.text);
+        if (!text || text.length < 4) continue;
+        out.push({
             nickname,
-            age: Number.isFinite(age) && age >= 18 && age <= 45 ? Math.floor(age) : 18 + Math.floor(Math.random() * 14),
-            city: String(data.city || myCity || '未知').trim().slice(0, 12) || '未知',
-            bio: String(data.bio || '').trim().slice(0, 40),
+            age: clampAge(row.age),
+            city: cities[i] || sanitizeNickname(row.city) || '未知',
+            bio: String(row.bio || '').trim().slice(0, 40),
             text,
             gender: targetGender,
-        };
-    } catch (e) {
-        console.warn('[st-momo] recommend card failed', e);
-        return null;
+        });
     }
+    return out;
 }
 
 /**
- * Sequential generation so later posts can avoid earlier ones.
- * @param {object[]} users
- * @param {object} [settings]
- * @param {{ channel?: string }} [opts]
- * @returns {Promise<(string|null)[]>}
+ * Batch: nearby feed — all authors locked to profile city.
+ * @returns {Promise<object[]>}
  */
-export async function resolvePostTexts(users, settings = null, opts = {}) {
-    const cfg = getFeedContentSettings(settings);
-    const list = users || [];
-    const out = [];
-    const avoid = [];
-    const channel = opts.channel || 'nearby';
+export async function generateNearbyBatch(profile, count = FEED_PAGE_SIZE) {
+    if (!canUseTavernApi()) return [];
 
-    for (let i = 0; i < list.length; i++) {
-        // eslint-disable-next-line no-await-in-loop
-        const text = await resolvePostText(list[i], cfg, { avoid, index: i, channel });
-        out.push(text);
-        if (text) avoid.push(text);
+    const myGender = normalizeGender(profile?.gender);
+    const targetGender = myGender === 'female' ? 'male' : 'female';
+    const city = String(profile?.city || '').trim() || '同城';
+    const cfg = getFeedContentSettings();
+
+    const systemPrompt = [
+        '你是陌陌「附近/同城」信息流批量生成器。',
+        '只输出一个 JSON 数组，不要 markdown，不要解释。',
+        `必须正好 ${count} 个对象，字段：nickname, age, bio, text。`,
+        `所有人城市都是「${city}」，不要输出 city 字段。`,
+        `text 必须带「${city}」同城生活感，并含同城话题钩子（本地店/街区/通勤/活动），可带短 #话题。`,
+        'nickname 彼此不同，像真实网名。',
+    ].join('\n');
+
+    const userPrompt = [
+        cfg.prompt,
+        '',
+        `浏览者住在「${city}」，要看同城附近动态。`,
+        `生成 ${count} 名异性（${targetGender === 'female' ? '女' : '男'}）同城用户动态。`,
+        `唯一批次 ${uid('near').slice(-6)}`,
+        `输出示例：[{"nickname":"地铁末班车","age":26,"bio":"设计师","text":"${city}这雨也太大了 #同城吐槽 有伞的路过吗"}]`,
+    ].join('\n');
+
+    let rows = extractJsonArray(await callGenerateRaw(systemPrompt, userPrompt, 1200));
+    if (!rows?.length) {
+        rows = extractJsonArray(await callGenerateRaw(systemPrompt, `${userPrompt}\n\n请只输出合法 JSON 数组：`, 1200));
+    }
+    if (!rows?.length) return [];
+
+    const out = [];
+    for (let i = 0; i < Math.min(count, rows.length); i++) {
+        const row = rows[i] || {};
+        const nickname = sanitizeNickname(row.nickname) || `同城${i + 1}`;
+        const text = sanitizeFeedText(row.text);
+        if (!text || text.length < 4) continue;
+        out.push({
+            nickname,
+            age: clampAge(row.age),
+            city,
+            bio: String(row.bio || '').trim().slice(0, 40),
+            text,
+            gender: targetGender,
+        });
     }
     return out;
+}
+
+/**
+ * Batch: friend posts for sampled friends.
+ * @param {object[]} friends
+ * @returns {Promise<{id:string,text:string}[]>}
+ */
+export async function generateFriendsBatch(friends) {
+    if (!canUseTavernApi() || !friends?.length) return [];
+
+    const cfg = getFeedContentSettings();
+    const list = friends.slice(0, FEED_PAGE_SIZE);
+
+    const systemPrompt = [
+        '你是陌陌「好友动态」批量生成器。',
+        '只输出一个 JSON 数组，不要 markdown，不要解释。',
+        '每个对象字段：id, text。id 必须原样使用给定好友 id。',
+        'text：该好友会发的 18-48 字动态，贴合其人设，不要广告腔。',
+    ].join('\n');
+
+    const roster = list.map((f, i) => {
+        const bits = [
+            `${i + 1}. id=${f.id}`,
+            `昵称=${f.nickname}`,
+            `城=${f.city || ''}`,
+            `简介=${(f.bio || '').slice(0, 40)}`,
+            f.persona ? `人设=${String(f.persona).slice(0, 80)}` : '',
+        ].filter(Boolean);
+        return bits.join('；');
+    }).join('\n');
+
+    const userPrompt = [
+        cfg.prompt,
+        '',
+        `为下列 ${list.length} 位好友各写一条动态：`,
+        roster,
+        `唯一批次 ${uid('fr').slice(-6)}`,
+        '输出示例：[{"id":"abc","text":"加班到现在，谁还没睡出来冒个泡"}]',
+    ].join('\n');
+
+    let rows = extractJsonArray(await callGenerateRaw(systemPrompt, userPrompt, 1000));
+    if (!rows?.length) {
+        rows = extractJsonArray(await callGenerateRaw(systemPrompt, `${userPrompt}\n\n请只输出合法 JSON 数组：`, 1000));
+    }
+    if (!rows?.length) return [];
+
+    const byId = new Map(list.map((f) => [f.id, f]));
+    const out = [];
+    for (const row of rows) {
+        const id = String(row?.id || '').trim();
+        if (!byId.has(id)) continue;
+        const text = sanitizeFeedText(row.text);
+        if (!text || text.length < 4) continue;
+        out.push({ id, text });
+    }
+
+    // Align missing friends by index fallback once
+    if (out.length < list.length) {
+        const got = new Set(out.map((x) => x.id));
+        for (let i = 0; i < list.length; i++) {
+            const f = list[i];
+            if (got.has(f.id)) continue;
+            const row = rows[i];
+            const text = sanitizeFeedText(row?.text);
+            if (text && text.length >= 4) out.push({ id: f.id, text });
+        }
+    }
+
+    return out;
+}
+
+/** @deprecated single-card path kept unused; batch APIs preferred */
+export async function resolveRecommendCard() {
+    return null;
+}
+
+export async function resolvePostText() {
+    return null;
+}
+
+export async function resolvePostTexts() {
+    return [];
 }

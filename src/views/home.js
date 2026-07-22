@@ -12,9 +12,9 @@ const TABS = [
 ];
 
 const EMPTY_COPY = {
-    recommend: '还没有推荐动态<br/>下拉刷新，由酒馆 API 生成可能与你互动的趣味内容',
-    nearby: '还没有同城附近动态<br/>下拉刷新，按你选定的城市生成同城用户与话题',
-    friends: '还没有好友动态<br/>先去匹配或附近加好友，再下拉刷新（随机抽好友生成）',
+    recommend: '还没有推荐动态<br/>下拉刷新，一次批量生成趣味互动内容',
+    nearby: '还没有同城附近动态<br/>下拉刷新，按你选定的城市批量生成同城动态',
+    friends: '还没有好友动态<br/>先去匹配或附近加好友，再下拉刷新',
 };
 
 export class HomeView {
@@ -25,55 +25,55 @@ export class HomeView {
         this.app = app;
         this.filter = 'recommend';
         this._ptrDispose = null;
-        this.refreshing = false;
+        /** @type {string|null} currently refreshing channel */
+        this.refreshingChannel = null;
         /** @type {Record<string, boolean>} */
         this._autoTried = {};
+    }
+
+    get refreshing() {
+        return Boolean(this.refreshingChannel);
     }
 
     _city() {
         return String(this.app.store.getProfile().city || '').trim() || '同城';
     }
 
-    async refreshFeed() {
-        if (this.refreshing) return;
-        this.refreshing = true;
-        const channel = this.filter;
+    async refreshFeed(forceChannel = null) {
+        const channel = forceChannel || this.filter;
+        if (this.refreshingChannel) {
+            if (this.refreshingChannel === channel) return;
+            toast(`正在刷新「${this._label(this.refreshingChannel)}」，请稍候`, 'info');
+            return;
+        }
+
+        this.refreshingChannel = channel;
         const store = this.app.store;
         const profile = store.getProfile();
         const city = this._city();
 
+        // Only re-render loading state for the active tab
+        if (this.filter === channel) this.app.render('home');
+
         try {
             if (!canUseTavernApi()) {
                 toast('酒馆 API 未在线，无法生成动态（纯 AI，无本地文案库）', 'warning');
-                this.refreshing = false;
-                this.app.render('home');
                 return;
             }
 
             if (channel === 'friends' && !store.getFriends().length) {
                 toast('还没有好友，先去匹配或附近加一个吧', 'info');
                 store.replaceChannelPosts('friends', []);
-                this.refreshing = false;
-                this.app.render('home');
                 return;
             }
 
-            const tip = channel === 'nearby'
-                ? `正在生成「${city}」同城附近动态…`
-                : channel === 'friends'
-                    ? '正在随机抽取好友并生成动态…'
-                    : '正在生成推荐趣味动态…';
-            toast(tip, 'info');
-
+            toast(`正在生成「${this._label(channel, city)}」…`, 'info');
             const posts = await refreshFeedChannel(store, channel, profile);
-            const failed = posts.filter((p) => p.genFailed).length;
-            if (failed) {
-                toast(`已刷新，${failed} 条生成失败`, 'warning');
-            } else if (!posts.length && channel === 'friends') {
+
+            if (!posts.length && channel === 'friends') {
                 toast('好友动态为空', 'info');
             } else {
-                const label = channel === 'nearby' ? `${city} 附近` : channel === 'friends' ? '好友' : '推荐';
-                toast(`已刷新 ${posts.length} 条「${label}」动态`, 'success');
+                toast(`已刷新 ${posts.length} 条「${this._label(channel, city)}」`, 'success');
             }
         } catch (e) {
             console.error(e);
@@ -84,27 +84,36 @@ export class HomeView {
             } else {
                 toast('刷新失败', 'error');
             }
+        } finally {
+            this.refreshingChannel = null;
+            if (this.app.tab === 'home') this.app.render('home');
         }
+    }
 
-        this.refreshing = false;
-        this.app.render('home');
+    _label(channel, city = '') {
+        if (channel === 'nearby') return `${city || this._city()} 附近`;
+        if (channel === 'friends') return '好友';
+        return '推荐';
     }
 
     render() {
         const city = this._city();
         const posts = this.app.store.getPosts(this.filter);
+        const loadingThis = this.refreshingChannel === this.filter;
         const tip = this.filter === 'nearby'
-            ? `下拉刷新「${escapeHtml(city)}」同城动态（纯 AI）`
+            ? `下拉刷新「${escapeHtml(city)}」同城（一次批量生成）`
             : this.filter === 'friends'
-                ? '下拉刷新：随机抽好友，由 API 生成动态'
-                : '下拉刷新：API 生成可能与你互动的趣味推荐';
+                ? '下拉刷新：随机抽好友批量生成'
+                : '下拉刷新：批量生成跨城趣味推荐';
 
         const feedHtml = posts.length
             ? posts.map((p) => this._postCard(p)).join('')
             : `<div class="mm-empty">${EMPTY_COPY[this.filter] || EMPTY_COPY.recommend}</div>`;
 
-        const tab = (id, label) =>
-            `<button type="button" class="${this.filter === id ? 'is-active' : ''}" data-filter="${id}">${label}</button>`;
+        const tab = (id, label) => {
+            const busy = this.refreshingChannel === id ? ' ·…' : '';
+            return `<button type="button" class="${this.filter === id ? 'is-active' : ''}" data-filter="${id}">${label}${busy}</button>`;
+        };
 
         return `
             <section class="mm-page mm-home mm-page-enter">
@@ -117,7 +126,7 @@ export class HomeView {
                 </div>
                 <div class="mm-feed mm-scroll" id="mm-home-scroll">
                     ${ptrMarkup()}
-                    ${this.refreshing ? '<div class="mm-empty">生成中…</div>' : feedHtml}
+                    ${loadingThis ? '<div class="mm-empty">批量生成中…</div>' : feedHtml}
                     <div class="mm-ptr-tip">${tip}</div>
                 </div>
             </section>
@@ -167,23 +176,29 @@ export class HomeView {
         this._ptrDispose?.();
         const scroll = root.querySelector('#mm-home-scroll');
         this._ptrDispose = bindPullToRefresh(scroll, {
-            onRefresh: () => this.refreshFeed(),
+            onRefresh: () => this.refreshFeed(this.filter),
         });
 
+        // Auto-refresh ONLY the current empty tab, never cascade to others
         const posts = this.app.store.getPosts(this.filter);
-        const needAuto = !this._autoTried[this.filter]
+        const canAuto = !this._autoTried[this.filter]
+            && !this.refreshingChannel
             && posts.length === 0
-            && !this.refreshing
             && (this.filter !== 'friends' || this.app.store.getFriends().length > 0);
 
-        if (needAuto) {
+        if (canAuto) {
             this._autoTried[this.filter] = true;
-            setTimeout(() => this.refreshFeed(), 200);
+            const ch = this.filter;
+            setTimeout(() => {
+                if (this.filter === ch && !this.refreshingChannel) this.refreshFeed(ch);
+            }, 220);
         }
 
         root.querySelectorAll('[data-filter]').forEach((btn) => {
             btn.addEventListener('click', () => {
-                this.filter = btn.getAttribute('data-filter') || 'recommend';
+                const next = btn.getAttribute('data-filter') || 'recommend';
+                if (next === this.filter) return;
+                this.filter = next;
                 this.app.render('home');
             });
         });

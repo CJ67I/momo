@@ -1,15 +1,16 @@
 /**
  * Friends proactively message the user on a virtual-time interval.
+ * May deliver 1–2 short bubbles.
  */
 
-import { canUseTavernApi, generateNpcReply } from './ai.js';
+import { canUseTavernApi, deliverBubbles, generateNpcReplies } from './ai.js';
 import { getVirtualNow } from './time.js';
 import { toast, uid } from './utils.js';
 
 let timer = null;
 let busy = false;
 
-async function generateProactiveText(app, peer) {
+async function generateProactiveBubbles(app, peer) {
     const myProfile = app.store.getProfile();
     const history = app.store.getMessages(peer.id);
     const settings = app.store.getSettings();
@@ -17,19 +18,19 @@ async function generateProactiveText(app, peer) {
     if (settings.useAiReply !== false && canUseTavernApi()) {
         const style = peer.speechStyle ? `对话风格：${peer.speechStyle}` : '';
         const persona = peer.persona ? `人物设定：${peer.persona}` : '';
-        const text = await generateNpcReply({
+        const bubbles = await generateNpcReplies({
             peer,
             history,
             userText: [
                 '（系统提示：这是你主动找玩家聊天，不是回复。',
-                '请自然开启一句新话题或关心近况，1-2 句短消息。）',
+                '请自然开启新话题或关心近况。可 1 条，也可连发 2 条短消息。）',
                 style,
                 persona,
             ].filter(Boolean).join('\n'),
             myProfile,
             useAi: true,
         });
-        if (text) return text;
+        if (bubbles?.length) return bubbles.slice(0, 2);
     }
     return null;
 }
@@ -46,7 +47,6 @@ async function tick(app) {
     const friends = app.store.getFriends().filter((f) => f?.id);
     if (!friends.length) return;
 
-    // pick the friend most overdue
     let target = null;
     let bestOver = -1;
     for (const f of friends) {
@@ -58,37 +58,40 @@ async function tick(app) {
         }
     }
     if (!target) return;
-
-    // avoid interrupting active reply
     if (app.chatView?.sending) return;
 
     busy = true;
     try {
-        const text = await generateProactiveText(app, target);
-        if (!text) return;
+        const bubbles = await generateProactiveBubbles(app, target);
+        if (!bubbles?.length) return;
 
-        app.store.appendMessage(target.id, {
-            id: uid('msg'),
-            from: 'them',
-            text,
-            createdAt: now,
-            proactive: true,
-        });
-        app.store.updateUser({
-            ...app.store.getFriend(target.id),
-            lastProactiveAt: now,
-        });
-
-        const viewing = app.open && app.tab === 'chat' && app.chatView?.activePeerId === target.id;
-        if (viewing) {
-            app.store.markRead(target.id);
-            app.render('chat');
-        } else {
-            toast(`${target.nickname}：${text.slice(0, 28)}${text.length > 28 ? '…' : ''}`, 'info');
-            if (app.open && app.tab === 'chat' && !app.chatView?.activePeerId) {
-                app.render('chat');
+        await deliverBubbles(bubbles, async (text, index) => {
+            app.store.appendMessage(target.id, {
+                id: uid('msg'),
+                from: 'them',
+                text,
+                createdAt: getVirtualNow(app.store.getSettings()),
+                proactive: true,
+            });
+            if (index === 0) {
+                app.store.updateUser({
+                    ...app.store.getFriend(target.id),
+                    lastProactiveAt: getVirtualNow(app.store.getSettings()),
+                });
             }
-        }
+
+            const viewing = app.open && app.tab === 'chat' && app.chatView?.activePeerId === target.id;
+            if (viewing) {
+                app.store.markRead(target.id);
+                app.render('chat');
+            } else if (index === bubbles.length - 1) {
+                const preview = bubbles.join(' ');
+                toast(`${target.nickname}：${preview.slice(0, 28)}${preview.length > 28 ? '…' : ''}`, 'info');
+                if (app.open && app.tab === 'chat' && !app.chatView?.activePeerId) {
+                    app.render('chat');
+                }
+            }
+        });
     } catch (e) {
         console.warn('[st-momo] proactive message failed', e);
     } finally {
@@ -104,7 +107,6 @@ export function startProactiveLoop(app) {
     timer = setInterval(() => {
         tick(app);
     }, 15000);
-    // first check soon after mount
     setTimeout(() => tick(app), 8000);
 }
 
