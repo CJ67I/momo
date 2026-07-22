@@ -104,7 +104,9 @@ export class ProfileView {
                     </div>
                     <div class="mm-card mm-profile-about">
                         <h3>关于我</h3>
-                        <p>${escapeHtml(hp.about || user.bio || '这个人很懒，什么都没写')}</p>
+                        <p>${escapeHtml(hp.about || user.bio || '人设生成中，稍后再看…')}</p>
+                        ${user.persona ? `<p class="mm-persona-block">${escapeHtml(user.persona)}</p>` : ''}
+                        ${user.speechStyle ? `<p class="mm-muted" style="margin-top:8px">对话风格：${escapeHtml(user.speechStyle)}</p>` : ''}
                         <div class="mm-profile-meta">
                             <span>职业 ${escapeHtml(hp.job || '保密')}</span>
                             <span>情感 ${escapeHtml(hp.relationship || '保密')}</span>
@@ -130,7 +132,7 @@ export class ProfileView {
         root.querySelector('[data-action="add"]')?.addEventListener('click', () => {
             const user = this._resolveUser();
             if (!user) return;
-            this.app.store.addFriend(user);
+            this.app.addFriendAndEnrich(user);
             toast(`已添加 ${user.nickname}`, 'success');
             this.app.render('profile');
         });
@@ -138,7 +140,7 @@ export class ProfileView {
         root.querySelector('[data-action="chat"]')?.addEventListener('click', () => {
             const user = this._resolveUser();
             if (!user) return;
-            if (!this.app.store.isFriend(user.id)) this.app.store.addFriend(user);
+            if (!this.app.store.isFriend(user.id)) this.app.addFriendAndEnrich(user);
             this.app.stackPage = null;
             this.app.openChat(user.id);
         });

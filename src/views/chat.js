@@ -224,7 +224,7 @@ export class ChatView {
             id: uid('msg'),
             from: 'me',
             text,
-            createdAt: Date.now(),
+            createdAt: this.app.store.now(),
         });
         if (input) input.value = '';
 
@@ -248,7 +248,7 @@ export class ChatView {
                 id: uid('msg'),
                 from: 'them',
                 text: reply,
-                createdAt: Date.now(),
+                createdAt: this.app.store.now(),
             });
         } catch (err) {
             console.error(err);

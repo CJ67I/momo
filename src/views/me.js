@@ -1,5 +1,5 @@
 import { canUseTavernApi } from '../ai.js';
-import { DEFAULT_FEED_PROMPT, DEFAULT_FEED_TEMPLATES } from '../feed-content.js';
+import { DEFAULT_FEED_PROMPT } from '../feed-content.js';
 import { createNpcFromCharacter } from '../npc-factory.js';
 import {
     getApiStatus,
@@ -9,8 +9,17 @@ import {
     getPersonaInfo,
     getWorldInfoSnippets,
 } from '../st-bridge.js';
+import { formatClockHm, getVirtualNow, toDatetimeLocalValue } from '../time.js';
 import { listWorldBooks, loadWorldBook } from '../worldbook.js';
-import { avatarGradient, escapeHtml, normalizeGender, oppositeGender, toast } from '../utils.js';
+import {
+    avatarGradient,
+    confirmSettingSave,
+    escapeHtml,
+    normalizeGender,
+    notifySettingSaved,
+    oppositeGender,
+    toast,
+} from '../utils.js';
 
 export class MeView {
     /**
@@ -69,6 +78,10 @@ export class MeView {
                 : `未在线 · ${api.mainApi || 'api'} · ${api.onlineStatus}（NPC 将用本地话术回复）`;
 
         const opposite = oppositeGender(p.gender) === 'female' ? '女' : '男';
+        const vNow = getVirtualNow(settings);
+        const timeLocal = toDatetimeLocalValue(vNow);
+        const scale = Number(settings.timeScale) || 1;
+        const proactiveMin = Number(settings.proactiveIntervalMin) || 30;
 
         const bookListHtml = books.length
             ? books.map((b) => `
@@ -81,6 +94,7 @@ export class MeView {
 
         return `
             <section class="mm-page mm-me">
+                <div class="mm-save-banner" aria-live="polite"></div>
                 <header class="mm-topbar">
                     <div class="mm-brand">我</div>
                     <button type="button" class="mm-link" data-action="refresh-bridge">刷新联动</button>
@@ -92,6 +106,7 @@ export class MeView {
                         <p class="mm-muted">${escapeHtml(p.city)} · ${normalizeGender(p.gender) === 'female' ? '女' : '男'}</p>
                         <p class="mm-me-bio">${escapeHtml(p.bio)}</p>
                         <p class="mm-muted">好友 ${friends} · 匹配对象应为「${opposite}」</p>
+                        <p class="mm-muted">陌陌时间 ${formatClockHm(vNow)} · 流速 ×${scale}</p>
                     </div>
                 </div>
 
@@ -134,25 +149,48 @@ export class MeView {
                 </div>
 
                 <div class="mm-card mm-bridge-card">
-                    <h3>动态内容生成</h3>
+                    <h3>动态内容生成（纯 AI）</h3>
                     <p class="mm-muted" style="margin:0 0 8px;font-size:12px;line-height:1.5">
-                        可用占位符：<code>{{nickname}}</code> <code>{{age}}</code> <code>{{city}}</code>
+                        刷新动态时会<strong>严格按提示词</strong>调用酒馆 API 随机生成，不再使用本地模版库。
+                        占位符：<code>{{nickname}}</code> <code>{{age}}</code> <code>{{city}}</code>
                         <code>{{gender}}</code> <code>{{tag}}</code> <code>{{bio}}</code>
                     </p>
-                    <label class="mm-switch" style="margin-bottom:8px">
-                        <span>用 AI 按提示词生成动态</span>
-                        <input type="checkbox" id="mm-ai-feed" ${settings.useAiFeed ? 'checked' : ''} />
-                    </label>
-                    <label class="mm-field-label">提示词（AI）
-                        <textarea id="mm-feed-prompt" rows="4" placeholder="${escapeHtml(DEFAULT_FEED_PROMPT)}">${escapeHtml(settings.feedPrompt || '')}</textarea>
-                    </label>
-                    <label class="mm-field-label">模版（每行一条，本地随机 / AI 失败回退）
-                        <textarea id="mm-feed-templates" rows="6" placeholder="${escapeHtml(DEFAULT_FEED_TEMPLATES.join('\n'))}">${escapeHtml(settings.feedTemplates || '')}</textarea>
+                    <label class="mm-field-label">提示词
+                        <textarea id="mm-feed-prompt" rows="6" placeholder="${escapeHtml(DEFAULT_FEED_PROMPT)}">${escapeHtml(settings.feedPrompt || '')}</textarea>
                     </label>
                     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-                        <button type="button" class="mm-btn" data-action="feed-save">保存动态设定</button>
-                        <button type="button" class="mm-btn mm-btn-ghost" data-action="feed-reset">恢复默认</button>
+                        <button type="button" class="mm-btn" data-action="feed-save">保存动态提示词</button>
+                        <button type="button" class="mm-btn mm-btn-ghost" data-action="feed-reset">恢复默认提示词</button>
                     </div>
+                </div>
+
+                <div class="mm-card mm-bridge-card">
+                    <h3>时间模块</h3>
+                    <p class="mm-muted" style="margin:0 0 8px;font-size:12px;line-height:1.5">
+                        可设定陌陌内当前时间；之后按「真实经过时间 × 流速」推进。顶栏时钟显示虚拟时间。
+                    </p>
+                    <label class="mm-field-label">当前陌陌时间
+                        <input type="datetime-local" id="mm-virtual-time" value="${escapeHtml(timeLocal)}" />
+                    </label>
+                    <label class="mm-field-label">时间流速（1=与现实同步，60=现实1分钟≈陌陌1小时）
+                        <input type="number" id="mm-time-scale" min="0.1" max="1440" step="0.1" value="${scale}" />
+                    </label>
+                    <button type="button" class="mm-btn mm-btn-block" data-action="time-save">保存时间设定</button>
+                </div>
+
+                <div class="mm-card mm-bridge-card">
+                    <h3>好友主动私聊</h3>
+                    <label class="mm-switch" style="margin-bottom:8px">
+                        <span>允许好友按间隔主动发消息</span>
+                        <input type="checkbox" id="mm-proactive" ${settings.proactiveEnabled ? 'checked' : ''} />
+                    </label>
+                    <label class="mm-field-label">主动消息间隔（陌陌分钟）
+                        <input type="number" id="mm-proactive-min" min="1" max="10080" step="1" value="${proactiveMin}" />
+                    </label>
+                    <p class="mm-muted" style="margin:0 0 8px;font-size:11px;line-height:1.45">
+                        间隔按陌陌虚拟时间计算；需酒馆 API 在线，并建议先为人设生成完成。
+                    </p>
+                    <button type="button" class="mm-btn mm-btn-block" data-action="proactive-save">保存主动私聊设定</button>
                 </div>
 
                 <form class="mm-form" id="mm-profile-form">
@@ -211,8 +249,28 @@ export class MeView {
             });
         }
 
+        const saveToggle = (key, checked, label) => {
+            if (!confirmSettingSave(label)) {
+                // revert checkbox UI
+                const map = {
+                    autoReply: '#mm-auto-reply',
+                    useAiReply: '#mm-ai-reply',
+                    useAiNames: '#mm-ai-names',
+                    storyInject: '#mm-story-inject',
+                    worldbookEnabled: '#mm-wb-enabled',
+                    includeEmbeddedBook: '#mm-wb-embedded',
+                };
+                const el = root.querySelector(map[key]);
+                if (el) el.checked = !checked;
+                return;
+            }
+            this.app.store.updateSettings({ [key]: checked });
+            notifySettingSaved(root, `已保存：${label}（${checked ? '开' : '关'}）`);
+        };
+
         root.querySelector('#mm-profile-form')?.addEventListener('submit', async (e) => {
             e.preventDefault();
+            if (!confirmSettingSave('个人资料')) return;
             const fd = new FormData(e.target);
             const nickname = String(fd.get('nickname') || '').trim();
             const age = Number(fd.get('age')) || 22;
@@ -231,65 +289,89 @@ export class MeView {
             });
 
             if (prevGender !== gender) {
-                toast('性别已更新，正在重配异性池…', 'info');
                 try {
                     await this.app.regenerateOppositePool();
-                    toast(`已按「${gender === 'female' ? '女' : '男'}」重配异性 NPC`, 'success');
+                    this.app.render('me');
+                    notifySettingSaved(
+                        this.app.root?.querySelector('#mm-screen'),
+                        `资料已保存，并按「${gender === 'female' ? '女' : '男'}」重配异性 NPC`,
+                    );
                 } catch (err) {
                     console.error(err);
-                    toast('重配失败，可到首页手动刷新', 'warning');
+                    this.app.render('me');
+                    toast('资料已保存，但异性池重配失败，可到首页手动刷新', 'warning');
                 }
             } else {
-                toast('资料已保存', 'success');
+                this.app.render('me');
+                notifySettingSaved(this.app.root?.querySelector('#mm-screen'), '个人资料已保存并生效');
             }
-            this.app.render('me');
         });
 
         root.querySelector('#mm-auto-reply')?.addEventListener('change', (e) => {
-            this.app.store.updateSettings({ autoReply: e.target.checked });
+            saveToggle('autoReply', e.target.checked, '好友自动回复');
         });
         root.querySelector('#mm-ai-reply')?.addEventListener('change', (e) => {
-            this.app.store.updateSettings({ useAiReply: e.target.checked });
+            saveToggle('useAiReply', e.target.checked, '优先使用酒馆 API 回复');
         });
         root.querySelector('#mm-ai-names')?.addEventListener('change', (e) => {
-            this.app.store.updateSettings({ useAiNames: e.target.checked });
+            saveToggle('useAiNames', e.target.checked, 'AI 生成现代网名');
         });
         root.querySelector('#mm-story-inject')?.addEventListener('change', (e) => {
-            this.app.store.updateSettings({ storyInject: e.target.checked });
-            toast(e.target.checked ? '已开启线下模式' : '已关闭线下模式', 'info');
+            saveToggle('storyInject', e.target.checked, '线下模式');
         });
-        root.querySelector('#mm-ai-feed')?.addEventListener('change', (e) => {
-            this.app.store.updateSettings({ useAiFeed: e.target.checked });
-        });
+
         root.querySelector('[data-action="feed-save"]')?.addEventListener('click', () => {
+            if (!confirmSettingSave('动态提示词')) return;
             const prompt = String(root.querySelector('#mm-feed-prompt')?.value || '');
-            const templates = String(root.querySelector('#mm-feed-templates')?.value || '');
-            const useAiFeed = Boolean(root.querySelector('#mm-ai-feed')?.checked);
-            this.app.store.updateSettings({ feedPrompt: prompt, feedTemplates: templates, useAiFeed });
-            toast('动态生成设定已保存', 'success');
+            this.app.store.updateSettings({ feedPrompt: prompt });
+            notifySettingSaved(root, '动态提示词已保存：刷新首页将严格按此生成');
         });
         root.querySelector('[data-action="feed-reset"]')?.addEventListener('click', () => {
-            this.app.store.updateSettings({
-                feedPrompt: DEFAULT_FEED_PROMPT,
-                feedTemplates: DEFAULT_FEED_TEMPLATES.join('\n'),
-                useAiFeed: false,
-            });
-            toast('已恢复默认动态模版', 'info');
+            if (!confirmSettingSave('恢复默认动态提示词')) return;
+            this.app.store.updateSettings({ feedPrompt: DEFAULT_FEED_PROMPT });
             this.app.render('me');
+            notifySettingSaved(this.app.root?.querySelector('#mm-screen'), '已恢复默认动态提示词');
         });
+
+        root.querySelector('[data-action="time-save"]')?.addEventListener('click', () => {
+            if (!confirmSettingSave('时间设定')) return;
+            const raw = root.querySelector('#mm-virtual-time')?.value;
+            const scale = Math.max(0.1, Number(root.querySelector('#mm-time-scale')?.value) || 1);
+            const when = raw ? new Date(raw).getTime() : getVirtualNow(this.app.store.getSettings());
+            this.app.store.setVirtualClock(Number.isFinite(when) ? when : Date.now());
+            this.app.store.updateSettings({ timeScale: scale });
+            const msg = `时间已更新：${formatClockHm(this.app.store.now())} · 流速 ×${scale}`;
+            this.app.render('me');
+            notifySettingSaved(this.app.root?.querySelector('#mm-screen'), msg);
+        });
+
+        root.querySelector('[data-action="proactive-save"]')?.addEventListener('click', () => {
+            if (!confirmSettingSave('主动私聊设定')) return;
+            const proactiveEnabled = Boolean(root.querySelector('#mm-proactive')?.checked);
+            const proactiveIntervalMin = Math.max(1, Number(root.querySelector('#mm-proactive-min')?.value) || 30);
+            this.app.store.updateSettings({ proactiveEnabled, proactiveIntervalMin });
+            notifySettingSaved(
+                root,
+                proactiveEnabled
+                    ? `已开启主动私聊：每 ${proactiveIntervalMin} 陌陌分钟`
+                    : '已关闭好友主动私聊',
+            );
+        });
+
         root.querySelector('#mm-wb-enabled')?.addEventListener('change', (e) => {
-            this.app.store.updateSettings({ worldbookEnabled: e.target.checked });
+            saveToggle('worldbookEnabled', e.target.checked, '启用世界书注入');
         });
         root.querySelector('#mm-wb-embedded')?.addEventListener('change', (e) => {
-            this.app.store.updateSettings({ includeEmbeddedBook: e.target.checked });
+            saveToggle('includeEmbeddedBook', e.target.checked, '读取角色卡内嵌书');
         });
 
         root.querySelector('[data-action="wb-save"]')?.addEventListener('click', () => {
+            if (!confirmSettingSave('世界书选择')) return;
             const names = this._collectCheckedBooks(root);
             this.app.store.setWorldbookSelection(names);
             const scope = this.app.store.getWorldbookSettings().scopeLabel;
-            toast(`已保存 ${names.length} 本到「${scope}」`, 'success');
             this.app.render('me');
+            notifySettingSaved(this.app.root?.querySelector('#mm-screen'), `世界书已保存：${names.length} 本 →「${scope}」`);
         });
 
         root.querySelector('[data-action="wb-refresh"]')?.addEventListener('click', async () => {
@@ -331,6 +413,7 @@ export class MeView {
         });
 
         root.querySelector('[data-action="sync-persona"]')?.addEventListener('click', () => {
+            if (!confirmSettingSave('从 Persona 同步昵称')) return;
             const persona = getPersonaInfo();
             if (!persona.name) {
                 toast('未读取到 Persona 名称', 'warning');
@@ -341,7 +424,7 @@ export class MeView {
                 avatarText: persona.name.slice(0, 1),
                 bio: persona.description ? persona.description.slice(0, 80) : this.app.store.getProfile().bio,
             });
-            toast(`已同步：${persona.name}`, 'success');
+            notifySettingSaved(root, `已同步 Persona：${persona.name}`);
             this.app.render('me');
         });
 
@@ -360,10 +443,10 @@ export class MeView {
             if (!npc) return;
             if (this.app.store.isFriend(npc.id)) {
                 this.app.store.updateUser(npc);
-                toast('已更新该角色好友资料', 'info');
+                notifySettingSaved(root, `已更新好友：${npc.nickname}`);
             } else {
-                this.app.store.addFriend(npc);
-                toast(`已添加好友：${npc.nickname}`, 'success');
+                this.app.addFriendAndEnrich(npc);
+                notifySettingSaved(root, `已添加好友：${npc.nickname}（后台生成人设中）`);
             }
             this.app.openProfile(npc.id, 'me');
         });
@@ -374,7 +457,7 @@ export class MeView {
             this.app.chatView.activePeerId = null;
             this.app.matchView.resetForGenderChange();
             this.app.stackPage = null;
-            toast('已清空', 'warning');
+            notifySettingSaved(root, '本地数据已清空');
             this.app.render('me');
         });
     }

@@ -57,6 +57,8 @@ export async function generateNpcReply(opts) {
                     `昵称：${peer.nickname}；年龄：${peer.age}；城市：${peer.city}；性别：${peer.gender === 'female' ? '女' : '男'}`,
                     `简介：${peer.bio || '无'}`,
                     `标签：${(peer.tags || []).join('、') || '无'}`,
+                    peer.persona ? `完整人设：${peer.persona}` : '',
+                    peer.speechStyle ? `对话风格：${peer.speechStyle}` : '',
                     peer.homepage?.about ? `主页关于我：${peer.homepage.about}` : '',
                     peer.homepage?.job ? `职业：${peer.homepage.job}` : '',
                     '',

@@ -441,9 +441,38 @@ body.st-momo-scroll-lock {
     color: #e85a8a;
 }
 
-.mm-chip.mm-age.is-male {
-    background: #e8f3ff;
-    color: #1a6fe0;
+.mm-save-banner {
+    display: none;
+    margin: 0;
+    padding: 10px 14px;
+    background: linear-gradient(90deg, #ffe8a3, #ffd56a);
+    color: #6b4a00;
+    font-size: 13px;
+    font-weight: 700;
+    border-bottom: 2px solid #f0b429;
+    text-align: center;
+    letter-spacing: 0.02em;
+}
+
+.mm-save-banner.is-show {
+    display: block;
+    animation: mm-banner-pop 0.35s ease both;
+}
+
+.mm-persona-block {
+    margin: 10px 0 0;
+    padding: 10px;
+    background: var(--mm-bg);
+    border-radius: 12px;
+    font-size: 13px;
+    line-height: 1.55;
+    color: #333;
+    white-space: pre-wrap;
+}
+
+@keyframes mm-banner-pop {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
 .mm-muted {

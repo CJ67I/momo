@@ -16,9 +16,24 @@ export function pick(arr) {
     return arr[Math.floor(Math.random() * arr.length)];
 }
 
+function readNow() {
+    try {
+        const s = window.SillyTavern?.getContext?.()?.extensionSettings?.['st-momo']?.settings;
+        if (!s) return Date.now();
+        const rate = Math.max(0, Number(s.timeScale));
+        const scale = Number.isFinite(rate) && rate > 0 ? rate : 1;
+        const base = Number(s.virtualTimeMs);
+        const anchor = Number(s.virtualAnchorReal);
+        if (!Number.isFinite(base) || !Number.isFinite(anchor)) return Date.now();
+        return Math.floor(base + (Date.now() - anchor) * scale);
+    } catch {
+        return Date.now();
+    }
+}
+
 export function formatTime(ts) {
-    const d = new Date(ts || Date.now());
-    const now = new Date();
+    const d = new Date(ts || readNow());
+    const now = new Date(readNow());
     const sameDay = d.toDateString() === now.toDateString();
     const hh = String(d.getHours()).padStart(2, '0');
     const mm = String(d.getMinutes()).padStart(2, '0');
@@ -27,7 +42,7 @@ export function formatTime(ts) {
 }
 
 export function relativeTime(ts) {
-    const diff = Date.now() - Number(ts || 0);
+    const diff = readNow() - Number(ts || 0);
     const min = Math.floor(diff / 60000);
     if (min < 1) return '刚刚';
     if (min < 60) return `${min}分钟前`;
@@ -36,6 +51,35 @@ export function relativeTime(ts) {
     const day = Math.floor(hour / 24);
     if (day < 7) return `${day}天前`;
     return formatTime(ts);
+}
+
+/**
+ * Ask before applying a setting change. Returns true if user confirms.
+ * @param {string} label
+ */
+export function confirmSettingSave(label) {
+    return window.confirm(`确认保存「${label}」？\n保存后立即生效。`);
+}
+
+/**
+ * Prominent in-app reminder + toast after a setting is saved.
+ * @param {HTMLElement|null} root
+ * @param {string} message
+ */
+export function notifySettingSaved(root, message) {
+    toast(message, 'success');
+    if (!root) return;
+    let bar = root.querySelector('.mm-save-banner');
+    if (!bar) {
+        bar = document.createElement('div');
+        bar.className = 'mm-save-banner';
+        const page = root.querySelector('.mm-page') || root;
+        page.prepend(bar);
+    }
+    bar.textContent = `✓ ${message}`;
+    bar.classList.add('is-show');
+    clearTimeout(bar._hideTimer);
+    bar._hideTimer = setTimeout(() => bar.classList.remove('is-show'), 3600);
 }
 
 /**

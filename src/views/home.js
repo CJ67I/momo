@@ -25,11 +25,17 @@ export class HomeView {
                 preferFast: true,
             });
             store.setStrangers(strangers);
+            toast('正在按提示词生成动态…', 'info');
             const friendPosts = await createPostsForUsers(store.getFriends(), true);
             const strangerPosts = await createPostsForUsers(strangers, false);
             store.replacePosts([...friendPosts, ...strangerPosts]);
             await injectFeedRefresh(strangerPosts.length);
-            toast('已刷新附近动态', 'success');
+            const failed = [...friendPosts, ...strangerPosts].filter((p) => String(p.text || '').includes('动态生成失败')).length;
+            if (failed) {
+                toast(`动态已刷新，其中 ${failed} 条生成失败（检查 API）`, 'warning');
+            } else {
+                toast('已刷新附近动态', 'success');
+            }
         } catch (e) {
             console.error(e);
             toast('刷新失败', 'error');
@@ -138,7 +144,7 @@ export class HomeView {
                     }
                     : null));
                 if (!user) return;
-                this.app.store.addFriend(user);
+                this.app.addFriendAndEnrich(user);
                 await injectAddFriend(user);
                 toast(`已添加 ${user.nickname}`, 'success');
                 this.app.render('home');

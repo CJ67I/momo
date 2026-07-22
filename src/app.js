@@ -1,5 +1,8 @@
 import { MomoStore } from './storage.js';
 import { createPostsForUsers, createStrangerPool } from './npc-factory.js';
+import { scheduleFriendPersonaEnrichment } from './npc-persona.js';
+import { startProactiveLoop } from './proactive.js';
+import { formatClockHm, getVirtualNow } from './time.js';
 import { makeDraggable } from './drag.js';
 import { HomeView } from './views/home.js';
 import { MatchView } from './views/match.js';
@@ -29,6 +32,7 @@ export class MomoApp {
         this.fab = null;
         this._scrollLockY = 0;
         this._dragDispose = null;
+        this._clockTimer = null;
     }
 
     /**
@@ -65,6 +69,17 @@ export class MomoApp {
         this._tickClock();
         this._seedIfNeeded();
         this._syncFabState();
+        startProactiveLoop(this);
+    }
+
+    /**
+     * Add friend and kick off background AI persona/style generation.
+     * @param {object} user
+     */
+    addFriendAndEnrich(user) {
+        const friend = this.store.addFriend(user);
+        if (friend) scheduleFriendPersonaEnrichment(this, friend);
+        return friend;
     }
 
     async _seedIfNeeded() {
@@ -94,11 +109,12 @@ export class MomoApp {
         const el = this.root?.querySelector('#mm-clock');
         const paint = () => {
             if (!el) return;
-            const d = new Date();
-            el.textContent = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+            el.textContent = formatClockHm(getVirtualNow(this.store.getSettings()));
+            el.title = `陌陌时间 ×${this.store.getSettings().timeScale || 1}`;
         };
         paint();
-        setInterval(paint, 30000);
+        if (this._clockTimer) clearInterval(this._clockTimer);
+        this._clockTimer = setInterval(paint, 1000);
     }
 
     _bindFab() {

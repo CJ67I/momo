@@ -177,7 +177,7 @@ export class MatchView {
         this._swipe('right', async () => {
             if (c) {
                 this.app.store.pushMatch(c);
-                this.app.store.addFriend(c);
+                this.app.addFriendAndEnrich(c);
                 await injectMatchSuccess(c);
                 toast(`匹配成功！已添加 ${c.nickname}`, 'success');
             }

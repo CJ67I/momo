@@ -1,4 +1,5 @@
 import { getContextScope } from './scope.js';
+import { getVirtualNow, patchSetVirtualTime } from './time.js';
 import { normalizeGender, uid } from './utils.js';
 
 export const MODULE_NAME = 'st-momo';
@@ -14,6 +15,7 @@ const DEFAULT_PROFILE = Object.freeze({
 });
 
 function emptyState() {
+    const now = Date.now();
     return {
         profile: { ...DEFAULT_PROFILE },
         friends: [],
@@ -25,14 +27,19 @@ function emptyState() {
             autoReply: true,
             useAiReply: true,
             useAiNames: true,
-            useAiFeed: false,
             feedPrompt: '',
-            feedTemplates: '',
             storyInject: false,
             worldbookEnabled: true,
-            worldbookSelected: [], // legacy global fallback
-            worldbookByScope: {}, // { [scopeKey]: string[] }
+            worldbookSelected: [],
+            worldbookByScope: {},
             includeEmbeddedBook: true,
+            // virtual time
+            virtualTimeMs: now,
+            virtualAnchorReal: now,
+            timeScale: 1,
+            // proactive friend DMs (interval in virtual minutes)
+            proactiveEnabled: false,
+            proactiveIntervalMin: 30,
         },
     };
 }
@@ -98,6 +105,21 @@ export class MomoStore {
         if (!this.state.profile?.nickname) this.state.profile = { ...DEFAULT_PROFILE };
         if (!this.state.settings.worldbookByScope || typeof this.state.settings.worldbookByScope !== 'object') {
             this.state.settings.worldbookByScope = {};
+        }
+        // migrate away from local feed templates / useAiFeed toggle
+        if ('feedTemplates' in this.state.settings) delete this.state.settings.feedTemplates;
+        if ('useAiFeed' in this.state.settings) delete this.state.settings.useAiFeed;
+        if (!Number.isFinite(Number(this.state.settings.virtualTimeMs))) {
+            Object.assign(this.state.settings, patchSetVirtualTime(Date.now()));
+        }
+        if (!Number.isFinite(Number(this.state.settings.virtualAnchorReal))) {
+            this.state.settings.virtualAnchorReal = Date.now();
+        }
+        if (!Number.isFinite(Number(this.state.settings.timeScale)) || Number(this.state.settings.timeScale) <= 0) {
+            this.state.settings.timeScale = 1;
+        }
+        if (!Number.isFinite(Number(this.state.settings.proactiveIntervalMin))) {
+            this.state.settings.proactiveIntervalMin = 30;
         }
         this.save();
     }
@@ -179,10 +201,13 @@ export class MomoStore {
     addFriend(user) {
         if (!user?.id) return null;
         if (this.state.friends.some((f) => f.id === user.id)) return user;
+        const now = getVirtualNow(this.getSettings());
         const friend = {
             ...user,
             isFriend: true,
-            addedAt: Date.now(),
+            addedAt: now,
+            lastProactiveAt: now,
+            personaReady: Boolean(user.personaReady),
         };
         this.state.friends.unshift(friend);
         this.state.strangers = this.state.strangers.filter((s) => s.id !== user.id);
@@ -197,10 +222,10 @@ export class MomoStore {
                         id: uid('msg'),
                         from: 'them',
                         text: `嗨～我是${user.nickname}，很高兴认识你！`,
-                        createdAt: Date.now(),
+                        createdAt: now,
                     },
                 ],
-                updatedAt: Date.now(),
+                updatedAt: now,
                 unread: 1,
             };
         }
@@ -270,15 +295,26 @@ export class MomoStore {
     }
 
     appendMessage(peerId, message) {
+        const now = getVirtualNow(this.getSettings());
         if (!this.state.chats[peerId]) {
-            this.state.chats[peerId] = { peerId, messages: [], updatedAt: Date.now(), unread: 0 };
+            this.state.chats[peerId] = { peerId, messages: [], updatedAt: now, unread: 0 };
         }
         const chat = this.state.chats[peerId];
-        chat.messages.push(message);
-        chat.updatedAt = message.createdAt || Date.now();
-        if (message.from === 'them') chat.unread = (chat.unread || 0) + 1;
+        const msg = { ...message, createdAt: message.createdAt || now };
+        chat.messages.push(msg);
+        chat.updatedAt = msg.createdAt;
+        if (msg.from === 'them') chat.unread = (chat.unread || 0) + 1;
         this.save();
-        return message;
+        return msg;
+    }
+
+    /** Current virtual time (ms). */
+    now() {
+        return getVirtualNow(this.getSettings());
+    }
+
+    setVirtualClock(when) {
+        return this.updateSettings(patchSetVirtualTime(when));
     }
 
     markRead(peerId) {
