@@ -1,5 +1,6 @@
-import { getApiStatus } from './st-bridge.js';
 import { pick } from './utils.js';
+
+export { canUseTavernApi } from './ai.js';
 
 const PREFIX = [
     '不想', '今天也', '半颗', '路过', '在逃', '深夜', '周末', '北城', '南岛', '雾里',
@@ -35,11 +36,6 @@ const SUFFIX_NUM = () => {
     ];
     return pick(styles)();
 };
-
-export function canUseTavernApi() {
-    const s = getApiStatus();
-    return Boolean(s.available && s.hasGenerateRaw && s.online);
-}
 
 /**
  * Local modern-style nickname generator (no AI).

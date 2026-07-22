@@ -109,6 +109,13 @@ export class MomoStore {
         // migrate away from local feed templates / useAiFeed toggle
         if ('feedTemplates' in this.state.settings) delete this.state.settings.feedTemplates;
         if ('useAiFeed' in this.state.settings) delete this.state.settings.useAiFeed;
+        // migrate legacy posts → channel-tagged feeds
+        if (Array.isArray(this.state.posts)) {
+            this.state.posts = this.state.posts.map((p) => ({
+                ...p,
+                channel: p.channel || (p.isFriend ? 'friends' : 'nearby'),
+            }));
+        }
         if (!Number.isFinite(Number(this.state.settings.virtualTimeMs))) {
             Object.assign(this.state.settings, patchSetVirtualTime(Date.now()));
         }
@@ -177,8 +184,13 @@ export class MomoStore {
         return this.state.strangers;
     }
 
-    getPosts() {
-        return [...this.state.posts].sort((a, b) => b.createdAt - a.createdAt);
+    /**
+     * @param {'recommend'|'nearby'|'friends'|null} [channel]
+     */
+    getPosts(channel = null) {
+        let list = this.state.posts || [];
+        if (channel) list = list.filter((p) => p.channel === channel);
+        return [...list].sort((a, b) => b.createdAt - a.createdAt);
     }
 
     setStrangers(list) {
@@ -188,13 +200,27 @@ export class MomoStore {
 
     upsertPosts(posts) {
         const map = new Map(this.state.posts.map((p) => [p.id, p]));
-        for (const p of posts) map.set(p.id, p);
-        this.state.posts = Array.from(map.values()).sort((a, b) => b.createdAt - a.createdAt).slice(0, 80);
+        for (const p of posts) map.set(p.id, { ...p, channel: p.channel || 'nearby' });
+        this.state.posts = Array.from(map.values()).sort((a, b) => b.createdAt - a.createdAt).slice(0, 120);
         this.save();
     }
 
     replacePosts(posts) {
         this.state.posts = Array.isArray(posts) ? [...posts] : [];
+        this.save();
+    }
+
+    /**
+     * Replace only one home-feed channel; leave other channels intact.
+     * @param {'recommend'|'nearby'|'friends'} channel
+     * @param {object[]} posts
+     */
+    replaceChannelPosts(channel, posts) {
+        const others = (this.state.posts || []).filter((p) => p.channel !== channel);
+        const tagged = (posts || []).map((p) => ({ ...p, channel }));
+        this.state.posts = [...others, ...tagged]
+            .sort((a, b) => b.createdAt - a.createdAt)
+            .slice(0, 120);
         this.save();
     }
 
@@ -211,9 +237,10 @@ export class MomoStore {
         };
         this.state.friends.unshift(friend);
         this.state.strangers = this.state.strangers.filter((s) => s.id !== user.id);
-        this.state.posts = this.state.posts.map((p) =>
-            p.authorId === user.id ? { ...p, isFriend: true } : p,
-        );
+        // Leave recommend / nearby immediately; friends tab waits for next refresh
+        this.state.posts = this.state.posts
+            .filter((p) => !(p.authorId === user.id && (p.channel === 'recommend' || p.channel === 'nearby')))
+            .map((p) => (p.authorId === user.id ? { ...p, isFriend: true } : p));
         if (!this.state.chats[user.id]) {
             this.state.chats[user.id] = {
                 peerId: user.id,
@@ -239,9 +266,9 @@ export class MomoStore {
         const before = this.state.friends.length;
         this.state.friends = this.state.friends.filter((f) => f.id !== id);
         delete this.state.chats[id];
-        this.state.posts = this.state.posts.map((p) =>
-            p.authorId === id ? { ...p, isFriend: false } : p,
-        );
+        this.state.posts = this.state.posts
+            .filter((p) => !(p.authorId === id && p.channel === 'friends'))
+            .map((p) => (p.authorId === id ? { ...p, isFriend: false } : p));
         this.save();
         return this.state.friends.length < before;
     }

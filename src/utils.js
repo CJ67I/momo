@@ -16,6 +16,16 @@ export function pick(arr) {
     return arr[Math.floor(Math.random() * arr.length)];
 }
 
+/** Fisher–Yates shuffle; returns a new array. */
+export function shuffle(arr) {
+    const list = [...(arr || [])];
+    for (let i = list.length - 1; i > 0; i -= 1) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [list[i], list[j]] = [list[j], list[i]];
+    }
+    return list;
+}
+
 function readNow() {
     try {
         const s = window.SillyTavern?.getContext?.()?.extensionSettings?.['st-momo']?.settings;

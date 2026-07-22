@@ -82,6 +82,7 @@ export function injectAddFriend(user) {
     return injectStoryLine(`在陌陌添加了好友 ${user.nickname}。`);
 }
 
-export function injectFeedRefresh(count) {
-    return injectStoryLine(`刷了附近动态，看到 ${count} 条新内容。`);
+export function injectFeedRefresh(count, channel = 'nearby') {
+    const label = channel === 'recommend' ? '推荐' : channel === 'friends' ? '好友' : '附近';
+    return injectStoryLine(`刷了陌陌「${label}」动态，看到 ${count} 条新内容。`);
 }

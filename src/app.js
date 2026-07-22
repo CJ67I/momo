@@ -1,5 +1,5 @@
 import { MomoStore } from './storage.js';
-import { createPostsForUsers, createStrangerPool } from './npc-factory.js';
+import { createStrangerPool } from './npc-factory.js';
 import { scheduleFriendPersonaEnrichment } from './npc-persona.js';
 import { startProactiveLoop } from './proactive.js';
 import { formatClockHm, getVirtualNow } from './time.js';
@@ -9,6 +9,8 @@ import { MatchView } from './views/match.js';
 import { ChatView } from './views/chat.js';
 import { MeView } from './views/me.js';
 import { ProfileView } from './views/profile.js';
+import { canUseTavernApi } from './ai.js';
+import { toast } from './utils.js';
 
 const TABS = [
     { id: 'home', label: '首页', icon: '⌂' },
@@ -83,36 +85,41 @@ export class MomoApp {
     }
 
     async _seedIfNeeded() {
-        if (this.store.getPosts().length > 0 && this.store.getStrangers().length > 0) return;
+        // Home feeds are generated per-tab via API on first visit / pull-to-refresh.
+        // Only warm up a small stranger pool for Match when empty.
+        if (this.store.getStrangers().length > 0) return;
+        if (!canUseTavernApi()) return;
         const profile = this.store.getProfile();
         try {
-            const strangers = await createStrangerPool(profile, 6, {
+            const strangers = await createStrangerPool(profile, 4, {
                 city: profile.city,
                 preferFast: false,
                 parallel: true,
             });
             this.store.setStrangers(strangers);
-            this.store.upsertPosts(await createPostsForUsers(strangers, false));
         } catch (e) {
-            console.warn('[st-momo] seed failed', e);
+            console.warn('[st-momo] seed strangers failed', e);
         }
     }
 
-    /** Rebuild stranger pool after gender change */
+    /** Rebuild stranger pool after gender change — do not wipe recommend/friends feeds. */
     async regenerateOppositePool() {
         this.matchView?.resetForGenderChange?.();
         const profile = this.store.getProfile();
+        if (!canUseTavernApi()) {
+            toast('酒馆 API 未在线，异性池稍后可在匹配页重试', 'warning');
+            this.store.replaceChannelPosts('nearby', []);
+            return;
+        }
         const strangers = await createStrangerPool(profile, 6, {
             city: profile.city,
             preferFast: false,
             parallel: true,
         });
         this.store.setStrangers(strangers);
-        const city = String(profile.city || '').trim();
-        const localFriends = this.store.getFriends().filter((f) => String(f.city || '').trim() === city);
-        const friendPosts = localFriends.length ? await createPostsForUsers(localFriends, true) : [];
-        const strangerPosts = await createPostsForUsers(strangers, false);
-        this.store.replacePosts([...friendPosts, ...strangerPosts]);
+        // Nearby must rebuild with new opposite-gender locals; leave other channels alone
+        this.store.replaceChannelPosts('nearby', []);
+        if (this.homeView) this.homeView._autoTried.nearby = false;
     }
 
     _tickClock() {

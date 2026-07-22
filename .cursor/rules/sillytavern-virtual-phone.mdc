@@ -1,0 +1,61 @@
+---
+description: SillyTavern 虚拟手机扩展的架构、技术栈与实现边界（借鉴 yuzuki-phone 思路，原创实现）
+alwaysApply: true
+---
+
+# SillyTavern 虚拟扩展定位
+
+本项目（`st-momo`）为 **SillyTavern（酒馆）第三方扩展**：用手机壳 UI 做沉浸式角色扮演前端（陌陌风格社交），不是独立 Web App。
+
+安装形态必须符合酒馆规范：
+
+```text
+SillyTavern/public/scripts/extensions/third-party/<folder>/
+  manifest.json + index.js + style.css (+ settings.html / src/)
+```
+
+参考架构来源：https://github.com/gaigai315/yuzuki-phone（柚月小手机）——**只借鉴框架与能力模型，禁止复制其源码、UI 与核心逻辑**。
+
+# 技术栈（保持一致）
+
+- Vanilla JS（ES Module）+ 酒馆内置 jQuery + CSS3
+- 入口由 `manifest.json` 的 `js` / `css` 加载；不引入 React/Vue/打包器，除非用户明确要求
+- 运行时通过 `SillyTavern.getContext()` 联动：Persona、角色卡、主聊天、世界书、`generateRaw` / `generateQuiet`
+- 持久化优先 `extensionSettings`，不可用时回退 `localStorage`
+
+# 架构模式（借鉴公开能力，原创落地）
+
+按「壳层 + 多页签/App + 本地存储」组织，现有结构保持：
+
+- `index.js`：挂载 FAB / 设置抽屉 / 启动 `MomoApp`
+- `src/app.js`：手机壳、路由、状态栏时间
+- `src/views/*`：首页 / 匹配 / 消息 / 我 / 主页
+- `src/storage.js`、`st-bridge.js`、`ai.js`、`worldbook.js`、`time.js` 等能力模块
+
+实现新功能时优先对齐这些模式（用本项目命名与代码，勿照搬参考仓库）：
+
+1. **手机壳 + 视图栈**：可叠加页面（如主页压在 Tab 上），避免粗暴 `display:none` 导致切换闪白
+2. **虚拟时间引擎**：剧情/手机时间可推算，状态栏与动态时间一致
+3. **双轨通信（按需）**：扩展内聊天尽量不污染主线；需要剧情联动时再注入主聊天
+4. **媒体存路径不存 Base64**：大图走酒馆本地资源路径，防止存档膨胀
+5. **酒馆桥接集中在 `st-bridge.js`**：禁止在 view 里散落直接抠 DOM/全局 API
+
+# 实现约束
+
+```javascript
+// ❌ BAD — 抄参考项目或绕过桥接
+import { PhoneShell } from '../../../yuzuki-phone/phone/phone-shell.js';
+window.SillyTavern.getContext().chat.push(msg); // 在 view 里直接改主线
+
+// ✅ GOOD — 原创模块 + 桥接封装
+import { generateChatReply } from '../ai.js';
+import { getApiStatus, getPersonaSummary } from '../st-bridge.js';
+```
+
+- UI / 文案 / 交互保持**陌陌**风格与现有 CSS 变量（如 `--mm-pink`），不要做成微信复刻
+- 新增文件放在 `src/` 或 `src/views/`；改 `manifest.json` 版本号要同步有意义的变更说明
+- 本地预览用 `preview.html`；真机行为以酒馆扩展环境为准
+
+# 版权红线
+
+参考仓库声明禁止抄袭核心逻辑与 UI。允许：阅读 README/公开目录结构、理解「壳层 / App / 双轨 API / 时间引擎」等模式。禁止：粘贴其 JS/CSS、复刻其界面细节、把其文件并入本仓库。

@@ -277,7 +277,9 @@ export class MeView {
             const city = String(fd.get('city') || '').trim();
             const gender = normalizeGender(fd.get('gender') || 'male');
             const bio = String(fd.get('bio') || '').trim();
-            const prevGender = normalizeGender(this.app.store.getProfile().gender);
+            const prev = this.app.store.getProfile();
+            const prevGender = normalizeGender(prev.gender);
+            const prevCity = String(prev.city || '').trim();
 
             this.app.store.updateProfile({
                 nickname,
@@ -287,6 +289,11 @@ export class MeView {
                 bio,
                 avatarText: nickname.slice(0, 1) || '我',
             });
+
+            if (prevCity !== city) {
+                this.app.store.replaceChannelPosts('nearby', []);
+                if (this.app.homeView) this.app.homeView._autoTried.nearby = false;
+            }
 
             if (prevGender !== gender) {
                 try {
@@ -303,7 +310,10 @@ export class MeView {
                 }
             } else {
                 this.app.render('me');
-                notifySettingSaved(this.app.root?.querySelector('#mm-screen'), '个人资料已保存并生效');
+                const tip = prevCity !== city
+                    ? '资料已保存；城市已变，「附近」需重新下拉刷新'
+                    : '个人资料已保存并生效';
+                notifySettingSaved(this.app.root?.querySelector('#mm-screen'), tip);
             }
         });
 

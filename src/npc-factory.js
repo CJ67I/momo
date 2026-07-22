@@ -160,7 +160,14 @@ export async function createStrangerPool(profile, count = 8, opts = {}) {
         .map((u) => ({ ...u, city, sameCity: true, distance: nearbyDistance() }));
 }
 
-export async function createPostsForUsers(users, asFriend = false) {
+/**
+ * @param {object[]} users
+ * @param {boolean|{ asFriend?: boolean, channel?: 'recommend'|'nearby'|'friends' }} [opts]
+ */
+export async function createPostsForUsers(users, opts = false) {
+    const options = typeof opts === 'boolean' ? { asFriend: opts } : (opts || {});
+    const asFriend = Boolean(options.asFriend);
+    const channel = options.channel || (asFriend ? 'friends' : 'nearby');
     const list = users || [];
     let settings = null;
     try {
@@ -169,13 +176,14 @@ export async function createPostsForUsers(users, asFriend = false) {
         settings = null;
     }
     const now = getVirtualNow(settings || {});
-    const texts = await resolvePostTexts(list, settings);
+    const texts = await resolvePostTexts(list, settings, { channel });
 
     return list.map((user, i) => {
         const text = texts[i];
         const failed = !text;
         return {
             id: uid('post'),
+            channel,
             authorId: user.id,
             authorName: user.nickname,
             authorAge: user.age,
@@ -183,7 +191,6 @@ export async function createPostsForUsers(users, asFriend = false) {
             authorGender: user.gender,
             avatarText: user.avatarText,
             distance: user.distance,
-            // Distinct per-row failure note — never a shared "content template"
             text: failed
                 ? `（${user.nickname} 的动态生成失败 #${i + 1}：请确认酒馆 API 在线）`
                 : text,

@@ -488,6 +488,21 @@ body.st-momo-scroll-lock {
     padding: 3px 8px;
 }
 
+.mm-channel-tag {
+    font-size: 10px;
+    color: #c2185b;
+    background: rgba(255, 45, 123, 0.1);
+    border-radius: 999px;
+    padding: 2px 7px;
+    margin-left: 4px;
+    white-space: nowrap;
+}
+
+.mm-channel-tag.is-nearby {
+    color: #1565c0;
+    background: rgba(47, 140, 255, 0.12);
+}
+
 .mm-post-text {
     margin: 12px 0 10px;
     line-height: 1.55;
