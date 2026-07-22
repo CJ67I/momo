@@ -1,18 +1,17 @@
 /**
- * AI-only feed post generation. No local templates.
+ * AI-only feed post generation.
+ * No local content template library — each post is a fresh API call with diversity constraints.
  */
 
 import { canUseTavernApi } from './ai-names.js';
-import { normalizeGender } from './utils.js';
+import { normalizeGender, uid } from './utils.js';
 
 export const DEFAULT_FEED_PROMPT = [
     '你是中文社交 App「陌陌」动态文案生成器。',
-    '必须严格按下列人物信息与风格要求，随机创作一条全新短动态。',
-    '只输出动态正文本身：口语自然，像真人随手发，20-48 字。',
-    '禁止引号、禁止标签/话题符号、禁止解释、禁止复述设定、禁止模板腔。',
-    '每次内容都要不同，可围绕近况、心情、城市碎片、兴趣随手写。',
-    '',
-    '人物：昵称 {{nickname}}；年龄 {{age}}；城市 {{city}}；性别 {{gender}}；简介 {{bio}}；标签 {{tag}}。',
+    '必须严格按人物信息创作一条全新短动态，像真人随手发出。',
+    '只输出动态正文：口语自然，18-42 字。',
+    '禁止引号、禁止 #话题、禁止解释、禁止复述设定、禁止鸡汤口号、禁止模板腔。',
+    '内容要具体到场景细节，避免空泛的「今天天气真好」「又是普通的一天」。',
 ].join('\n');
 
 function getSettingsBucket() {
@@ -32,60 +31,129 @@ export function getFeedContentSettings(settings = null) {
 /**
  * @param {string} tpl
  * @param {object} user
+ * @param {{ spice?: string }} [extra]
  */
-export function fillFeedPlaceholders(tpl, user) {
+export function fillFeedPlaceholders(tpl, user, extra = {}) {
     const gender = normalizeGender(user?.gender) === 'female' ? '女' : '男';
-    const tag = (user?.tags && user.tags[0]) || '日常';
+    const tag = (user?.tags && user.tags[0]) || '';
     return String(tpl || '')
         .replaceAll('{{nickname}}', String(user?.nickname || 'TA'))
         .replaceAll('{{city}}', String(user?.city || '这座城'))
         .replaceAll('{{age}}', String(user?.age ?? ''))
-        .replaceAll('{{tag}}', String(tag))
-        .replaceAll('{{bio}}', String(user?.bio || ''))
+        .replaceAll('{{tag}}', String(tag || '无'))
+        .replaceAll('{{bio}}', String(user?.bio || '无'))
         .replaceAll('{{gender}}', gender)
+        .replaceAll('{{spice}}', String(extra.spice || ''))
         .trim();
 }
 
 function sanitizeFeedText(raw) {
     return String(raw || '')
         .replace(/^["'「」]|["'「」]$/g, '')
+        .replace(/^\d+[\.\)、]\s*/, '')
         .split(/[\n\r]/)[0]
         .replace(/^(动态|正文|内容)[:：]\s*/i, '')
         .trim()
         .slice(0, 80);
 }
 
+function tooSimilar(a, b) {
+    const x = String(a || '').replace(/\s+/g, '');
+    const y = String(b || '').replace(/\s+/g, '');
+    if (!x || !y) return false;
+    if (x === y) return true;
+    if (x.length >= 8 && y.includes(x.slice(0, 8))) return true;
+    if (y.length >= 8 && x.includes(y.slice(0, 8))) return true;
+    // simple bigram overlap
+    const grams = (s) => {
+        const set = new Set();
+        for (let i = 0; i < s.length - 1; i++) set.add(s.slice(i, i + 2));
+        return set;
+    };
+    const A = grams(x);
+    const B = grams(y);
+    let hit = 0;
+    A.forEach((g) => { if (B.has(g)) hit += 1; });
+    const score = hit / Math.max(A.size, 1);
+    return score > 0.55;
+}
+
+function buildSpice(user, index, avoid) {
+    const roll = Math.floor(Math.random() * 100000);
+    const hour = new Date().getHours();
+    const slots = ['清晨出门', '午间空隙', '下班路上', '夜里刷手机', '周末游荡', '等人时分', '刚吃完饭', '地铁里'];
+    const slot = slots[(index + roll) % slots.length];
+    return [
+        `唯一编号 ${uid('postseed').slice(-6)}`,
+        `序号 ${index + 1}`,
+        `时间感 ${slot}（现实钟点约 ${hour} 点，仅作氛围，勿写钟点数字）`,
+        `必须出现或暗示城市「${user?.city || ''}」的同城生活碎片，但不要写成旅游攻略`,
+        avoid.length
+            ? `绝对不要与下列已生成动态雷同或改写：\n- ${avoid.slice(-8).join('\n- ')}`
+            : '这是本批第一条，请写得具体、有画面',
+    ].join('\n');
+}
+
 /**
- * Strict AI generation for one post. Throws / returns null if API unavailable.
  * @param {object} user
  * @param {ReturnType<typeof getFeedContentSettings>} [cfg]
+ * @param {{ avoid?: string[], index?: number }} [opts]
  */
-export async function resolvePostText(user, cfg = null) {
+export async function resolvePostText(user, cfg = null, opts = {}) {
     const settings = cfg || getFeedContentSettings();
+    const avoid = opts.avoid || [];
+    const index = opts.index || 0;
+
     if (!canUseTavernApi()) {
         console.warn('[st-momo] feed requires online ST API');
         return null;
     }
+
     try {
         const ctx = window.SillyTavern?.getContext?.();
         const generateRaw = ctx?.generateRaw;
         if (typeof generateRaw !== 'function') return null;
 
-        const filled = fillFeedPlaceholders(settings.prompt || DEFAULT_FEED_PROMPT, user);
+        const spice = buildSpice(user, index, avoid);
+        const userPrompt = fillFeedPlaceholders(
+            `${settings.prompt || DEFAULT_FEED_PROMPT}\n\n【本条约束】\n{{spice}}\n\n人物：昵称 {{nickname}}；年龄 {{age}}；城市 {{city}}；性别 {{gender}}；简介 {{bio}}；标签 {{tag}}。\n请直接输出一条动态：`,
+            user,
+            { spice },
+        );
+
         const systemPrompt = [
-            '严格遵守用户提示词。',
-            '只输出一条动态正文，不要解释，不要列表，不要前后缀。',
-            '内容必须是新写的，禁止照搬提示词原文。',
+            '你只输出一条陌陌动态正文。',
+            '严禁输出多条、编号列表、解释、前后缀。',
+            '严禁套用万能模板；每条必须有不可替换的具体细节。',
+            '若提示词与「本条约束」冲突，以本条约束的差异化要求优先。',
         ].join('\n');
 
         let result;
         try {
-            result = await generateRaw({ systemPrompt, prompt: filled, responseLength: 100 });
+            result = await generateRaw({ systemPrompt, prompt: userPrompt, responseLength: 90 });
         } catch {
-            result = await generateRaw(`${systemPrompt}\n\n${filled}`);
+            result = await generateRaw(`${systemPrompt}\n\n${userPrompt}`);
         }
-        const text = sanitizeFeedText(result);
-        return text.length >= 4 ? text : null;
+
+        let text = sanitizeFeedText(result);
+        if (!text || text.length < 4) return null;
+
+        // one retry if too similar to previous
+        if (avoid.some((prev) => tooSimilar(text, prev))) {
+            const retryPrompt = `${userPrompt}\n\n上一条候选「${text}」与已有内容过像，请彻底换场景重写一条：`;
+            let retry;
+            try {
+                retry = await generateRaw({ systemPrompt, prompt: retryPrompt, responseLength: 90 });
+            } catch {
+                retry = await generateRaw(`${systemPrompt}\n\n${retryPrompt}`);
+            }
+            const alt = sanitizeFeedText(retry);
+            if (alt && alt.length >= 4 && !avoid.some((prev) => tooSimilar(alt, prev))) {
+                text = alt;
+            }
+        }
+
+        return text;
     } catch (e) {
         console.warn('[st-momo] AI feed text failed', e);
         return null;
@@ -93,20 +161,22 @@ export async function resolvePostText(user, cfg = null) {
 }
 
 /**
+ * Sequential generation so later posts can avoid earlier ones (reduces homogenization).
  * @param {object[]} users
  * @param {object} [settings]
+ * @returns {Promise<(string|null)[]>}
  */
 export async function resolvePostTexts(users, settings = null) {
     const cfg = getFeedContentSettings(settings);
     const list = users || [];
-    // sequential-ish batches to reduce API stampede; still parallel within small chunks
     const out = [];
-    const chunk = 3;
-    for (let i = 0; i < list.length; i += chunk) {
-        const part = list.slice(i, i + chunk);
+    const avoid = [];
+
+    for (let i = 0; i < list.length; i++) {
         // eslint-disable-next-line no-await-in-loop
-        const texts = await Promise.all(part.map((u) => resolvePostText(u, cfg)));
-        out.push(...texts);
+        const text = await resolvePostText(list[i], cfg, { avoid, index: i });
+        out.push(text);
+        if (text) avoid.push(text);
     }
     return out;
 }

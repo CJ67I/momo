@@ -47,6 +47,7 @@ export class MatchView {
             const batch = await createStrangerPool(this.app.store.getProfile(), QUEUE_SIZE, {
                 preferFast: true,
                 parallel: true,
+                city: this.app.store.getProfile()?.city,
             });
             const valid = batch.filter((u) => this._isValid(u));
             this.queue = replace ? valid : [...this.queue, ...valid];

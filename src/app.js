@@ -86,7 +86,11 @@ export class MomoApp {
         if (this.store.getPosts().length > 0 && this.store.getStrangers().length > 0) return;
         const profile = this.store.getProfile();
         try {
-            const strangers = await createStrangerPool(profile, 6);
+            const strangers = await createStrangerPool(profile, 6, {
+                city: profile.city,
+                preferFast: false,
+                parallel: true,
+            });
             this.store.setStrangers(strangers);
             this.store.upsertPosts(await createPostsForUsers(strangers, false));
         } catch (e) {
@@ -98,9 +102,15 @@ export class MomoApp {
     async regenerateOppositePool() {
         this.matchView?.resetForGenderChange?.();
         const profile = this.store.getProfile();
-        const strangers = await createStrangerPool(profile, 6);
+        const strangers = await createStrangerPool(profile, 6, {
+            city: profile.city,
+            preferFast: false,
+            parallel: true,
+        });
         this.store.setStrangers(strangers);
-        const friendPosts = await createPostsForUsers(this.store.getFriends(), true);
+        const city = String(profile.city || '').trim();
+        const localFriends = this.store.getFriends().filter((f) => String(f.city || '').trim() === city);
+        const friendPosts = localFriends.length ? await createPostsForUsers(localFriends, true) : [];
         const strangerPosts = await createPostsForUsers(strangers, false);
         this.store.replacePosts([...friendPosts, ...strangerPosts]);
     }

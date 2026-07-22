@@ -488,11 +488,9 @@ body.st-momo-scroll-lock {
     padding: 3px 8px;
 }
 
-.mm-post-text {
-    margin: 12px 0 10px;
-    line-height: 1.55;
-    color: var(--mm-ink);
-    font-size: 15px;
+.mm-post-text.is-failed {
+    color: #b45309;
+    font-size: 13px;
 }
 
 .mm-post-actions {

@@ -1,7 +1,12 @@
+import { canUseTavernApi } from '../ai.js';
 import { createPostsForUsers, createStrangerPool, ensureHomepage } from '../npc-factory.js';
 import { bindPullToRefresh, ptrMarkup } from '../pull-refresh.js';
 import { injectAddFriend, injectFeedRefresh } from '../story-inject.js';
 import { avatarGradient, escapeHtml, normalizeGender, relativeTime, toast } from '../utils.js';
+
+function sameCity(a, b) {
+    return String(a || '').trim() === String(b || '').trim();
+}
 
 export class HomeView {
     /**
@@ -12,6 +17,7 @@ export class HomeView {
         this.filter = 'nearby';
         this._ptrDispose = null;
         this.refreshing = false;
+        this._autoTried = false;
     }
 
     async refreshFeed() {
@@ -19,22 +25,38 @@ export class HomeView {
         this.refreshing = true;
         const store = this.app.store;
         const profile = store.getProfile();
+        const city = String(profile.city || '').trim() || '同城';
+
         try {
+            if (!canUseTavernApi()) {
+                toast('酒馆 API 未在线，无法生成同城动态（纯 AI，无本地模版）', 'warning');
+                this.refreshing = false;
+                this.app.render('home');
+                return;
+            }
+
+            toast(`正在生成「${city}」同城附近动态…`, 'info');
             const strangers = await createStrangerPool(profile, 6, {
                 parallel: true,
-                preferFast: true,
+                preferFast: false,
+                city,
             });
             store.setStrangers(strangers);
-            toast('正在按提示词生成动态…', 'info');
-            const friendPosts = await createPostsForUsers(store.getFriends(), true);
+
+            // Only generate posts for same-city strangers on 附近 refresh
+            const localFriends = store.getFriends().filter((f) => sameCity(f.city, city));
+            const friendPosts = localFriends.length
+                ? await createPostsForUsers(localFriends, true)
+                : [];
             const strangerPosts = await createPostsForUsers(strangers, false);
             store.replacePosts([...friendPosts, ...strangerPosts]);
             await injectFeedRefresh(strangerPosts.length);
-            const failed = [...friendPosts, ...strangerPosts].filter((p) => String(p.text || '').includes('动态生成失败')).length;
+
+            const failed = [...friendPosts, ...strangerPosts].filter((p) => p.genFailed).length;
             if (failed) {
-                toast(`动态已刷新，其中 ${failed} 条生成失败（检查 API）`, 'warning');
+                toast(`${city} 动态已刷新，${failed} 条生成失败`, 'warning');
             } else {
-                toast('已刷新附近动态', 'success');
+                toast(`已刷新 ${city} 附近动态`, 'success');
             }
         } catch (e) {
             console.error(e);
@@ -45,8 +67,13 @@ export class HomeView {
     }
 
     render() {
+        const profile = this.app.store.getProfile();
+        const city = String(profile.city || '').trim() || '同城';
         let posts = this.app.store.getPosts();
-        if (this.filter === 'friends') {
+
+        if (this.filter === 'nearby') {
+            posts = posts.filter((p) => sameCity(p.authorCity, city));
+        } else if (this.filter === 'friends') {
             posts = posts.filter((p) => this.app.store.isFriend(p.authorId) || p.isFriend);
         } else if (this.filter === 'recommend') {
             posts = posts.filter((p) => !(this.app.store.isFriend(p.authorId) || p.isFriend));
@@ -54,7 +81,7 @@ export class HomeView {
 
         const feedHtml = posts.length
             ? posts.map((p) => this._postCard(p)).join('')
-            : `<div class="mm-empty">还没有动态<br/>下拉页面即可刷新</div>`;
+            : `<div class="mm-empty">还没有「${escapeHtml(city)}」附近动态<br/>下拉刷新，将按你的城市生成同城 NPC 与动态</div>`;
 
         const tab = (id, label) =>
             `<button type="button" class="${this.filter === id ? 'is-active' : ''}" data-filter="${id}">${label}</button>`;
@@ -63,7 +90,7 @@ export class HomeView {
             <section class="mm-page mm-home mm-page-enter">
                 <header class="mm-topbar">
                     <div class="mm-brand">陌陌</div>
-                    <span class="mm-muted">下拉刷新</span>
+                    <span class="mm-muted">${escapeHtml(city)} · 下拉刷新</span>
                 </header>
                 <div class="mm-subtabs">
                     ${tab('nearby', '附近')}
@@ -73,7 +100,7 @@ export class HomeView {
                 <div class="mm-feed mm-scroll" id="mm-home-scroll">
                     ${ptrMarkup()}
                     ${feedHtml}
-                    <div class="mm-ptr-tip">下拉刷新附近动态</div>
+                    <div class="mm-ptr-tip">下拉刷新「${escapeHtml(city)}」同城动态（纯 AI，无本地文案库）</div>
                 </div>
             </section>
         `;
@@ -101,7 +128,7 @@ export class HomeView {
                             : `<button type="button" class="mm-btn mm-btn-sm" data-action="add-friend" data-id="${escapeHtml(post.authorId)}">加好友</button>`
                     }
                 </div>
-                <p class="mm-post-text">${escapeHtml(post.text)}</p>
+                <p class="mm-post-text ${post.genFailed ? 'is-failed' : ''}">${escapeHtml(post.text)}</p>
                 <div class="mm-post-actions">
                     <span>♡ ${post.likes || 0}</span>
                     <span>💬 ${post.comments || 0}</span>
@@ -117,6 +144,15 @@ export class HomeView {
         this._ptrDispose = bindPullToRefresh(scroll, {
             onRefresh: () => this.refreshFeed(),
         });
+
+        // Auto-load nearby once if empty
+        const profile = this.app.store.getProfile();
+        const city = String(profile.city || '').trim() || '同城';
+        const nearbyCount = this.app.store.getPosts().filter((p) => sameCity(p.authorCity, city)).length;
+        if (!this._autoTried && this.filter === 'nearby' && nearbyCount === 0 && !this.refreshing) {
+            this._autoTried = true;
+            setTimeout(() => this.refreshFeed(), 200);
+        }
 
         root.querySelectorAll('[data-filter]').forEach((btn) => {
             btn.addEventListener('click', () => {
@@ -135,12 +171,12 @@ export class HomeView {
                         id: fromPost.authorId,
                         nickname: fromPost.authorName,
                         age: fromPost.authorAge,
-                        city: fromPost.authorCity,
+                        city: fromPost.authorCity || city,
                         gender: fromPost.authorGender,
                         avatarText: fromPost.avatarText,
                         distance: fromPost.distance,
-                        bio: '来自附近动态',
-                        tags: ['附近'],
+                        bio: '',
+                        tags: [],
                     }
                     : null));
                 if (!user) return;
