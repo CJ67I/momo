@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>st-momo 本地预览</title>
   <link rel="stylesheet" href="./style.css" />
   <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
@@ -28,15 +28,22 @@
 </head>
 <body>
   <div class="hint">
-    本地预览页（无需酒馆）。<br />
-    正式使用请把整个 <code>st-momo</code> 文件夹装进 SillyTavern 第三方扩展目录。
+    右下角粉色圆形按钮「陌」：点击打开/关闭，按住拖动。<br />
+    正式使用请把仓库装进 SillyTavern 第三方扩展目录。
   </div>
   <script type="module">
     import { MomoApp } from './src/app.js';
+
+    const fab = document.createElement('button');
+    fab.id = 'st-momo-fab';
+    fab.type = 'button';
+    fab.className = 'mm-fab';
+    fab.innerHTML = '<span class="mm-fab-label">陌</span>';
+    document.body.appendChild(fab);
+
     const app = new MomoApp();
-    app.mount();
+    app.mount(fab);
     window.StMomo = app;
-    app.toggle(true);
   </script>
 </body>
 </html>

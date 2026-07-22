@@ -23,15 +23,25 @@ export class MomoApp {
         this.tab = 'home';
         this.open = false;
         this.root = null;
+        this.fab = null;
         this._scrollLockY = 0;
+        this._dragDispose = null;
     }
 
-    mount() {
-        if (document.getElementById('st-momo-root')) return;
+    /**
+     * @param {HTMLElement | null} fab external floating action button
+     */
+    mount(fab = null) {
+        if (document.getElementById('st-momo-root')) {
+            this.root = document.getElementById('st-momo-root');
+            this.fab = fab || document.getElementById('st-momo-fab');
+            this._bindFab();
+            return;
+        }
+
         const root = document.createElement('div');
         root.id = 'st-momo-root';
         root.innerHTML = `
-            <button type="button" id="st-momo-launcher" class="mm-launcher" title="拖动可移动，点击打开陌陌" aria-label="打开陌陌">陌</button>
             <div id="st-momo-overlay" class="mm-overlay" aria-hidden="true">
                 <div class="mm-phone" role="dialog" aria-modal="true" aria-label="陌陌虚拟社交">
                     <div class="mm-status" id="mm-status-bar">
@@ -46,9 +56,12 @@ export class MomoApp {
         `;
         document.body.appendChild(root);
         this.root = root;
+        this.fab = fab || document.getElementById('st-momo-fab');
         this._bindShell();
+        this._bindFab();
         this._tickClock();
         this._seedIfNeeded();
+        this._syncFabState();
     }
 
     _seedIfNeeded() {
@@ -59,16 +72,40 @@ export class MomoApp {
         this.store.upsertPosts(createPostsForUsers(strangers, false));
     }
 
+    _bindFab() {
+        if (!this.fab) return;
+        this._dragDispose?.();
+        this._dragDispose = makeDraggable(this.fab, {
+            onTap: () => this.toggle(),
+            storage: true,
+        });
+        this._syncFabState();
+    }
+
+    _syncFabState() {
+        if (!this.fab) return;
+        let label = this.fab.querySelector('.mm-fab-label');
+        if (!label) {
+            this.fab.innerHTML = '<span class="mm-fab-label"></span>';
+            label = this.fab.querySelector('.mm-fab-label');
+        }
+        if (this.open) {
+            this.fab.classList.add('is-open');
+            this.fab.setAttribute('aria-label', '关闭陌陌');
+            this.fab.title = '拖动移动 · 点击关闭陌陌';
+            label.textContent = '✕';
+        } else {
+            this.fab.classList.remove('is-open');
+            this.fab.setAttribute('aria-label', '打开陌陌');
+            this.fab.title = '拖动移动 · 点击打开陌陌';
+            label.textContent = '陌';
+        }
+    }
+
     _bindShell() {
-        const launcher = this.root.querySelector('#st-momo-launcher');
         const overlay = this.root.querySelector('#st-momo-overlay');
         const closeBtn = this.root.querySelector('#mm-close-btn');
         const phone = this.root.querySelector('.mm-phone');
-
-        makeDraggable(launcher, {
-            onTap: () => this.toggle(true),
-            storage: true,
-        });
 
         closeBtn?.addEventListener('click', (e) => {
             e.preventDefault();
@@ -80,7 +117,6 @@ export class MomoApp {
             if (e.target === overlay) this.toggle(false);
         });
 
-        // Block background scroll / ST gesture bleed on mobile
         overlay?.addEventListener('touchmove', (e) => {
             if (e.target === overlay) e.preventDefault();
         }, { passive: false });
@@ -91,7 +127,6 @@ export class MomoApp {
             if (e.key === 'Escape' && this.open) this.toggle(false);
         });
 
-        // Keep panel inside visual viewport on rotate / keyboard
         window.addEventListener('resize', () => {
             if (this.open) this._syncViewportClass();
         });
@@ -125,27 +160,25 @@ export class MomoApp {
     toggle(force) {
         this.open = typeof force === 'boolean' ? force : !this.open;
         const overlay = this.root?.querySelector('#st-momo-overlay');
-        const launcher = this.root?.querySelector('#st-momo-launcher');
         if (!overlay) return;
 
         if (this.open) {
             overlay.classList.add('is-open');
             overlay.setAttribute('aria-hidden', 'false');
-            launcher?.classList.add('is-hidden');
             this._lockBodyScroll(true);
             this._syncViewportClass();
-            // next frame for CSS transition
             requestAnimationFrame(() => overlay.classList.add('is-visible'));
             this.render(this.tab);
         } else {
             overlay.classList.remove('is-visible');
             overlay.setAttribute('aria-hidden', 'true');
-            launcher?.classList.remove('is-hidden');
             this._lockBodyScroll(false);
             setTimeout(() => {
                 if (!this.open) overlay.classList.remove('is-open');
             }, 220);
         }
+
+        this._syncFabState();
     }
 
     openChat(peerId) {
