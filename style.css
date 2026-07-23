@@ -1304,6 +1304,43 @@ body.st-momo-scroll-lock {
     resize: vertical;
 }
 
+.mm-edit-persona-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--mm-muted);
+}
+
+.mm-edit-persona-head .mm-link {
+    font-size: 12px;
+    font-weight: 600;
+    border: 0;
+    background: transparent;
+    color: var(--mm-blue);
+    cursor: pointer;
+    padding: 0;
+}
+
+.mm-edit-persona-head .mm-link:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.mm-edit-status {
+    margin: -4px 0 0;
+    font-size: 11px;
+    line-height: 1.4;
+    min-height: 1.2em;
+}
+
+.mm-edit-form textarea[readonly] {
+    opacity: 0.75;
+    background: #eef3f9;
+}
+
 .mm-edit-actions {
     display: flex;
     gap: 8px;

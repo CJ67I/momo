@@ -24,9 +24,10 @@ function parseJsonBlock(raw) {
 
 /**
  * @param {object} user
+ * @param {{ force?: boolean }} [opts] force=true still generates even if personaReady
  * @returns {Promise<object|null>} enriched fields
  */
-export async function generateFriendPersona(user) {
+export async function generateFriendPersona(user, opts = {}) {
     if (!user?.id || !canUseTavernApi()) return null;
     try {
         ensureGenerationGuard();
@@ -40,7 +41,8 @@ export async function generateFriendPersona(user) {
             '"relationship":"情感状态","tags":["标签1","标签2"],',
             '"moments":["动态1","动态2","动态3"]}',
             '要求：现代都市真人感，禁止古风仙侠腔，禁止复读输入信息。',
-        ].join('\n');
+            opts.force ? '这是用户请求的重新生成，请给出与旧设定不同的新版本。' : '',
+        ].filter(Boolean).join('\n');
 
         const prompt = [
             `昵称：${user.nickname}`,
@@ -48,8 +50,9 @@ export async function generateFriendPersona(user) {
             `城市：${user.city}`,
             `性别：${gender}`,
             `已有简介：${user.bio || '无'}`,
+            user.persona && !opts.force ? `已有人设参考：${String(user.persona).slice(0, 120)}` : '',
             '请生成完整人设 JSON：',
-        ].join('\n');
+        ].filter(Boolean).join('\n');
 
         const result = await callMomoGenerate(systemPrompt, prompt, 520);
         const data = parseJsonBlock(result);
@@ -92,17 +95,18 @@ export async function generateFriendPersona(user) {
  * Fire-and-forget enrichment; safe to call multiple times.
  * @param {import('./app.js').MomoApp} app
  * @param {object} user
+ * @param {{ force?: boolean }} [opts]
  */
-export function scheduleFriendPersonaEnrichment(app, user) {
+export function scheduleFriendPersonaEnrichment(app, user, opts = {}) {
     if (!app?.store || !user?.id) return;
-    if (user.personaReady && user.persona && user.speechStyle) return;
+    if (!opts.force && user.personaReady && user.persona && user.speechStyle) return;
     if (pending.has(user.id)) return;
     pending.add(user.id);
 
     (async () => {
         try {
             toast(`正在为 ${user.nickname} 生成人设…`, 'info');
-            const patch = await generateFriendPersona(user);
+            const patch = await generateFriendPersona(user, opts);
             if (!patch) {
                 toast(`${user.nickname} 人设生成失败（需酒馆 API 在线）`, 'warning');
                 return;

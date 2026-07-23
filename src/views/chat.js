@@ -1,4 +1,5 @@
 import { canUseTavernApi, deliverBubbles, generateNpcReplies } from '../ai.js';
+import { generateFriendPersona } from '../npc-persona.js';
 import { avatarGradient, escapeHtml, formatTime, toast, uid } from '../utils.js';
 
 /** @typedef {'green'|'yellow'|'red'} SignalLight */
@@ -272,6 +273,12 @@ export class ChatView {
         document.getElementById('mm-friend-overlay')?.remove();
     }
 
+    _syncInterop() {
+        import('../interop.js')
+            .then((m) => m.syncInteropDigest(this.app.store))
+            .catch(() => {});
+    }
+
     _overlayHost() {
         return this.app.root?.querySelector('.mm-phone') || this.app.root || document.body;
     }
@@ -321,6 +328,7 @@ export class ChatView {
 
     /**
      * Edit friend nickname / bio / persona / speech style / tags.
+     * Persona + speechStyle: AI-generate first when empty; always allow regenerate then hand-edit.
      * @param {string} peerId
      */
     _openEditFriend(peerId) {
@@ -329,6 +337,7 @@ export class ChatView {
         if (!friend) return;
         this._closeOverlay();
 
+        const hasPersona = Boolean(String(friend.persona || '').trim() && String(friend.speechStyle || '').trim());
         const tags = Array.isArray(friend.tags) ? friend.tags.join('、') : '';
         const host = this._overlayHost();
         const wrap = document.createElement('div');
@@ -342,6 +351,11 @@ export class ChatView {
                     <label>昵称<input name="nickname" maxlength="16" required value="${escapeHtml(friend.nickname || '')}" /></label>
                     <label>简介<input name="bio" maxlength="40" value="${escapeHtml(friend.bio || '')}" /></label>
                     <label>标签（顿号分隔）<input name="tags" maxlength="60" value="${escapeHtml(tags)}" placeholder="徒步、咖啡" /></label>
+                    <div class="mm-edit-persona-head">
+                        <span>人设 / 说话风格</span>
+                        <button type="button" class="mm-link" data-edit="regen" id="mm-persona-regen">重新生成</button>
+                    </div>
+                    <p class="mm-muted mm-edit-status" id="mm-persona-status"></p>
                     <label>人设<textarea name="persona" rows="3" maxlength="300" placeholder="性格、经历、说话立场…">${escapeHtml(friend.persona || '')}</textarea></label>
                     <label>说话风格<textarea name="speechStyle" rows="2" maxlength="160" placeholder="口癖、语气、常用词…">${escapeHtml(friend.speechStyle || '')}</textarea></label>
                     <div class="mm-edit-actions">
@@ -354,11 +368,60 @@ export class ChatView {
         host.appendChild(wrap);
         requestAnimationFrame(() => wrap.classList.add('is-open'));
 
+        const form = wrap.querySelector('#mm-edit-friend-form');
+        const personaEl = form?.querySelector('[name="persona"]');
+        const styleEl = form?.querySelector('[name="speechStyle"]');
+        const bioEl = form?.querySelector('[name="bio"]');
+        const tagsEl = form?.querySelector('[name="tags"]');
+        const statusEl = wrap.querySelector('#mm-persona-status');
+        const regenBtn = wrap.querySelector('#mm-persona-regen');
+
+        const setPersonaLocked = (locked, statusText) => {
+            if (personaEl) personaEl.readOnly = locked;
+            if (styleEl) styleEl.readOnly = locked;
+            if (regenBtn) regenBtn.disabled = locked;
+            if (statusEl) statusEl.textContent = statusText || '';
+        };
+
+        const fillFromPatch = (patch) => {
+            if (!patch) return;
+            if (personaEl && patch.persona) personaEl.value = patch.persona;
+            if (styleEl && patch.speechStyle) styleEl.value = patch.speechStyle;
+            if (bioEl && patch.bio) bioEl.value = patch.bio;
+            if (tagsEl && Array.isArray(patch.tags) && patch.tags.length) {
+                tagsEl.value = patch.tags.join('、');
+            }
+        };
+
+        const runGenerate = async ({ force = false } = {}) => {
+            const latest = this.app.store.getFriend(id) || friend;
+            setPersonaLocked(true, '正在生成人设与说话风格…');
+            try {
+                const patch = await generateFriendPersona(latest, { force });
+                if (!patch?.persona && !patch?.speechStyle) {
+                    toast('人设生成失败，可手填或点重新生成', 'warning');
+                    setPersonaLocked(false, '生成失败，可手动填写');
+                    return;
+                }
+                fillFromPatch(patch);
+                setPersonaLocked(false, '已生成，可自由修改后保存');
+            } catch (e) {
+                console.warn('[st-momo] edit persona gen failed', e);
+                toast('人设生成失败，可手填或点重新生成', 'warning');
+                setPersonaLocked(false, '生成失败，可手动填写');
+            }
+        };
+
         wrap.addEventListener('click', (e) => {
             if (e.target.closest('[data-edit="cancel"]')) this._closeOverlay();
         });
 
-        wrap.querySelector('#mm-edit-friend-form')?.addEventListener('submit', (e) => {
+        regenBtn?.addEventListener('click', (e) => {
+            e.preventDefault();
+            runGenerate({ force: true });
+        });
+
+        form?.addEventListener('submit', (e) => {
             e.preventDefault();
             const fd = new FormData(e.target);
             const nickname = String(fd.get('nickname') || '').trim().slice(0, 16);
@@ -385,10 +448,17 @@ export class ChatView {
                 avatarText: nickname.replace(/[^\u4e00-\u9fa5A-Za-z0-9]/g, '').slice(0, 1) || friend.avatarText || '·',
                 personaReady: true,
             });
+            this._syncInterop();
             this._closeOverlay();
             toast('好友资料已更新', 'success');
             this.app.render('chat');
         });
+
+        if (!hasPersona) {
+            runGenerate({ force: true });
+        } else {
+            setPersonaLocked(false, '可直接修改，或点「重新生成」');
+        }
     }
 
     _clearChatHistory(id) {
@@ -403,6 +473,7 @@ export class ChatView {
             this._signalPeerId = null;
         }
         this.app.store.clearChat(id);
+        this._syncInterop();
         toast('聊天记录已删除', 'warning');
         this.app.render('chat');
     }
@@ -418,6 +489,7 @@ export class ChatView {
         this.light = 'green';
         this.app.store.removeFriend(id);
         if (this.activePeerId === id) this.activePeerId = null;
+        this._syncInterop();
         toast(`已删除 ${name}`, 'warning');
         this.app.render('chat');
     }
@@ -643,6 +715,7 @@ export class ChatView {
             createdAt: this.app.store.now(),
         });
         if (input) input.value = '';
+        this._syncInterop();
 
         const settings = this.app.store.getSettings();
         if (!settings.autoReply) {
@@ -727,6 +800,7 @@ export class ChatView {
                         this._refreshThreadSoft();
                     }
                 });
+                this._syncInterop();
             }
         } catch (err) {
             console.error(err);

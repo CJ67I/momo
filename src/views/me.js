@@ -218,21 +218,21 @@ export class MeView {
                         <input type="checkbox" id="mm-ai-names" ${settings.useAiNames !== false ? 'checked' : ''} />
                     </label>
                     <div class="mm-settings-block" style="padding:8px 12px 4px">
-                        <div style="font-weight:600;margin-bottom:6px">互通模式</div>
+                        <div style="font-weight:600;margin-bottom:6px">互通模式（主聊天 ↔ 陌陌）</div>
                         <label class="mm-radio-row" style="display:flex;gap:8px;align-items:flex-start;margin:6px 0">
-                            <input type="radio" name="mm-interop" value="off" ${(settings.interopMode || 'off') === 'off' ? 'checked' : ''} />
-                            <span><strong>关闭</strong>（默认）— 陌陌与主聊天互不注入，主线最稳</span>
+                            <input type="radio" name="mm-interop" value="off" ${(settings.interopMode || 'soft') === 'off' ? 'checked' : ''} />
+                            <span><strong>关闭</strong> — 线上静默：陌陌私聊不注入主线，主线最稳</span>
                         </label>
                         <label class="mm-radio-row" style="display:flex;gap:8px;align-items:flex-start;margin:6px 0">
-                            <input type="radio" name="mm-interop" value="soft" ${(settings.interopMode || 'off') === 'soft' ? 'checked' : ''} />
-                            <span><strong>软互通</strong> — 近况写入生成提示槽（IN_PROMPT），不写主聊天气泡</span>
+                            <input type="radio" name="mm-interop" value="soft" ${(settings.interopMode || 'soft') === 'soft' ? 'checked' : ''} />
+                            <span><strong>软互通</strong>（默认）— 线下感知：匹配/加好友近况 + 近期私聊摘要写入扩展提示槽，主线生成可感知，不写气泡</span>
                         </label>
                         <label class="mm-radio-row" style="display:flex;gap:8px;align-items:flex-start;margin:6px 0">
-                            <input type="radio" name="mm-interop" value="hard" ${(settings.interopMode || 'off') === 'hard' ? 'checked' : ''} />
-                            <span><strong>硬注入</strong> — 软互通 + 匹配/加好友时写一条剧情同步气泡</span>
+                            <input type="radio" name="mm-interop" value="hard" ${(settings.interopMode || 'soft') === 'hard' ? 'checked' : ''} />
+                            <span><strong>硬注入</strong> — 软互通 + 匹配/加好友时写一条「剧情同步」系统气泡</span>
                         </label>
                         <p class="mm-muted" style="margin:4px 0 8px;font-size:11px;line-height:1.45">
-                            刷动态永不写入主聊天。硬注入仅在匹配/加好友时写一条系统同步。
+                            私聊正文不会逐条写入主聊天。刷动态永不注入。请保存后到主线再生成一次以验证感知。
                         </p>
                         <button type="button" class="mm-btn mm-btn-block" data-action="interop-save">保存互通模式</button>
                     </div>
@@ -336,12 +336,12 @@ export class MeView {
         });
         root.querySelector('[data-action="interop-save"]')?.addEventListener('click', async () => {
             if (!confirmSettingSave('互通模式')) return;
-            const picked = root.querySelector('input[name="mm-interop"]:checked')?.value || 'off';
-            const mode = ['off', 'soft', 'hard'].includes(picked) ? picked : 'off';
+            const picked = root.querySelector('input[name="mm-interop"]:checked')?.value || 'soft';
+            const mode = ['off', 'soft', 'hard'].includes(picked) ? picked : 'soft';
             this.app.store.updateSettings({ interopMode: mode, storyInject: mode === 'hard' });
             const { purgeAllMomoPrompts, syncInteropFromSettings } = await import('../interop.js');
             purgeAllMomoPrompts();
-            syncInteropFromSettings();
+            syncInteropFromSettings(this.app.store);
             const label = mode === 'off' ? '关闭' : mode === 'hard' ? '硬注入' : '软互通';
             notifySettingSaved(root, `互通模式已设为「${label}」`);
         });

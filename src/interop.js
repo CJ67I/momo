@@ -1,13 +1,14 @@
 /**
  * Interop between Momo and SillyTavern main chat.
  *
- * Modes:
- * - off:  no cross-injection into main generation
- * - soft: update extension prompt slot only (does NOT write chat bubbles)
- * - hard: soft + rare curated system lines for key RP events (never feed refreshes)
+ * Dual-track (aligned with public virtual-phone capability model):
+ * - off:  online silence — no cross-injection into main generation
+ * - soft: offline sense — extension prompt slot with events + DM digests (no chat bubbles)
+ * - hard: soft + rare curated system lines for key RP events (match / add-friend)
  *
  * Soft inject uses ONLY IN_PROMPT + SYSTEM role.
  * Never use IN_CHAT + ASSISTANT (causes empty main replies on many CC backends).
+ * Never push raw Momo DM bubbles into ctx.chat.
  */
 
 import { isMainChatGenerating } from './api-client.js';
@@ -29,8 +30,16 @@ const POSITION_IN_PROMPT = 0;
 const DEPTH = 0;
 const ROLE_SYSTEM = 0;
 
+const DIGEST_MAX_PEERS = 3;
+const DIGEST_MSGS_PER_PEER = 5;
+const DIGEST_LINE_MAX = 72;
+const DIGEST_TOTAL_MAX = 1000;
+
 /** @type {string[]} */
 let eventLog = [];
+
+/** @type {import('./storage.js').MomoStore|null} */
+let digestStore = null;
 
 function getCtx() {
     try {
@@ -57,7 +66,7 @@ export function getInteropMode(settings = null) {
     const raw = String(s.interopMode || '').trim().toLowerCase();
     if (INTEROP_MODES.includes(raw)) return raw;
     if (s.storyInject === true) return 'hard';
-    return 'off';
+    return 'soft';
 }
 
 export function isInteropOn(settings = null) {
@@ -70,13 +79,60 @@ function clipLine(text, max = 120) {
     return `${s.slice(0, max)}…`;
 }
 
-function buildPromptBlock() {
-    if (!eventLog.length) return '';
-    return [
-        '【陌陌近况｜扩展提示，非聊天气泡】',
-        '以下为玩家在陌陌 App 中的近期重要动态，生成主线回复时可自然感知，不要复读系统公告口吻：',
-        ...eventLog.map((line, i) => `${i + 1}. ${line}`),
-    ].join('\n');
+/**
+ * Build a compact DM digest from store chats for the soft prompt slot.
+ * @param {import('./storage.js').MomoStore|null|undefined} store
+ * @returns {string}
+ */
+export function buildChatDigest(store) {
+    if (!store?.getChatList || !store?.getMessages) return '';
+
+    const list = store.getChatList()
+        .filter((item) => (item?.updatedAt || 0) > 0)
+        .slice(0, DIGEST_MAX_PEERS);
+
+    if (!list.length) return '';
+
+    const lines = ['【陌陌私聊摘要】主线生成时可自然感知，勿复读系统公告或逐条复述：'];
+    let total = lines[0].length;
+
+    for (const item of list) {
+        const friend = item.friend;
+        const name = friend?.nickname || '好友';
+        const msgs = (store.getMessages(friend.id) || []).slice(-DIGEST_MSGS_PER_PEER);
+        if (!msgs.length) continue;
+
+        const header = `· 与「${name}」：`;
+        if (total + header.length > DIGEST_TOTAL_MAX) break;
+        lines.push(header);
+        total += header.length;
+
+        for (const m of msgs) {
+            const who = m.from === 'me' ? '我' : 'TA';
+            const body = clipLine(m.text, DIGEST_LINE_MAX);
+            if (!body) continue;
+            const row = `  ${who}：${body}`;
+            if (total + row.length > DIGEST_TOTAL_MAX) break;
+            lines.push(row);
+            total += row.length;
+        }
+    }
+
+    return lines.length > 1 ? lines.join('\n') : '';
+}
+
+function buildPromptBlock(store = digestStore) {
+    const parts = [];
+    if (eventLog.length) {
+        parts.push([
+            '【陌陌近况｜扩展提示，非聊天气泡】',
+            '以下为玩家在陌陌 App 中的近期重要动态，生成主线回复时可自然感知，不要复读系统公告口吻：',
+            ...eventLog.map((line, i) => `${i + 1}. ${line}`),
+        ].join('\n'));
+    }
+    const digest = buildChatDigest(store);
+    if (digest) parts.push(digest);
+    return parts.join('\n\n');
 }
 
 /**
@@ -113,16 +169,15 @@ export function purgeAllMomoPrompts() {
 /**
  * Safe soft inject — IN_PROMPT + SYSTEM only; empty value clears the slot.
  */
-export function applySoftPrompt() {
+export function applySoftPrompt(store = digestStore) {
     const ctx = getCtx();
     if (typeof ctx?.setExtensionPrompt !== 'function') return false;
 
     const mode = getInteropMode();
-    const value = mode === 'off' ? '' : buildPromptBlock();
+    const value = mode === 'off' ? '' : buildPromptBlock(store);
 
     try {
         if (!value) {
-            // Fully remove rather than leave an empty IN_CHAT leftover
             const bag = ctx.extensionPrompts;
             if (bag && typeof bag === 'object') {
                 delete bag[INTEROP_KEY];
@@ -145,6 +200,21 @@ export function clearSoftPrompt() {
 }
 
 /**
+ * Refresh soft prompt from store digests + in-memory events.
+ * Call after DM send/reply, clearChat, deleteFriend, mount, settings save.
+ * @param {import('./storage.js').MomoStore|null|undefined} store
+ */
+export function syncInteropDigest(store = null) {
+    if (store) digestStore = store;
+    const mode = getInteropMode();
+    if (mode === 'off') {
+        purgeAllMomoPrompts();
+        return false;
+    }
+    return applySoftPrompt(digestStore);
+}
+
+/**
  * @param {string} line
  * @param {{hard?: boolean}} [opts]
  */
@@ -156,7 +226,7 @@ export async function recordInteropEvent(line, opts = {}) {
     if (mode === 'off') return false;
 
     eventLog = [text, ...eventLog.filter((x) => x !== text)].slice(0, 6);
-    applySoftPrompt();
+    applySoftPrompt(digestStore);
 
     if (mode === 'hard' && opts.hard) {
         return hardInjectChat(text);
@@ -187,7 +257,6 @@ async function hardInjectChat(text) {
 
     const mes = `【陌陌·剧情同步】${text}`;
     try {
-        // Prefer ST narrator system message when available
         if (typeof ctx.sendSystemMessage === 'function') {
             try {
                 ctx.sendSystemMessage('narrator', mes);
@@ -217,7 +286,6 @@ async function hardInjectChat(text) {
         };
         ctx.chat.push(msg);
         await ctx.saveChat?.();
-        // Only re-render when not generating
         if (!isMainChatGenerating()) {
             try {
                 ctx.printMessages?.();
@@ -252,18 +320,18 @@ export function notifyFeedRefresh() {
     return Promise.resolve(false);
 }
 
-export function syncInteropFromSettings() {
+/**
+ * @param {import('./storage.js').MomoStore|null|undefined} [store]
+ */
+export function syncInteropFromSettings(store = null) {
+    if (store) digestStore = store;
     const mode = getInteropMode();
     if (mode === 'off') {
         clearSoftPrompt();
         return mode;
     }
-    if (!eventLog.length) {
-        // Keep slot empty but ensure legacy IN_CHAT keys are gone
-        purgeAllMomoPrompts();
-        return mode;
-    }
-    applySoftPrompt();
+    purgeAllMomoPrompts();
+    applySoftPrompt(digestStore);
     return mode;
 }
 

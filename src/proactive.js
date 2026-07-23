@@ -98,6 +98,9 @@ async function tick(app) {
                 }
             }
         });
+        import('./interop.js')
+            .then((m) => m.syncInteropDigest(app.store))
+            .catch(() => {});
     } catch (e) {
         console.warn('[st-momo] proactive message failed', e);
     } finally {

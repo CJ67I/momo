@@ -78,7 +78,7 @@ export class MomoApp {
         import('./interop.js').then((m) => {
             m.purgeAllMomoPrompts();
             m.clearSoftPrompt();
-            m.syncInteropFromSettings();
+            m.syncInteropFromSettings(this.store);
         }).catch(() => {});
     }
 
