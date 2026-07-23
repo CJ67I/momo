@@ -1,26 +1,11 @@
-import { pick } from './utils.js';
 import { callMomoGenerate, ensureGenerationGuard } from './api-client.js';
 import { buildInteractionContext, formatContextForPrompt, getApiStatus } from './st-bridge.js';
-
-const FALLBACK_REPLIES = [
-    '哈哈哈好有趣，再说详细一点？',
-    '我也这么觉得～',
-    '今天过得怎么样？',
-    '听起来不错诶',
-    '那我们下次见一面？先聊聊也行',
-    '你平时喜欢做什么？',
-    '笑死，这个点我也在刷手机',
-    '可以呀，我挺感兴趣的',
-    '嗯嗯，我在听',
-    '你说话好温柔',
-];
 
 /**
  * Check whether ST API is ready for generation.
  */
 export function canUseTavernApi() {
     const s = getApiStatus();
-    // Online + either generateRaw OR we can hit backend with credentials in-browser
     return Boolean(s.available && s.online);
 }
 
@@ -81,81 +66,169 @@ export function parseReplyBubbles(raw) {
 }
 
 /**
- * Generate NPC reply bubble(s) via SillyTavern generateRaw.
- * Returns an array of 1–4 message strings.
+ * Drop / strip bubbles that clearly speak as the player.
+ * @param {string[]} bubbles
+ * @param {{ npcName: string, playerName: string }} ids
+ */
+function sanitizeNpcBubbles(bubbles, ids) {
+    const npc = String(ids.npcName || '').trim();
+    const player = String(ids.playerName || '').trim();
+    if (!bubbles?.length) return [];
+
+    const out = [];
+    for (const raw of bubbles) {
+        let t = String(raw || '').trim();
+        if (!t) continue;
+
+        // Strip roleplay prefixes like "玩家：" / "旅人：" / "我（玩家）"
+        t = t
+            .replace(/^(玩家|user|User)\s*[:：]\s*/i, '')
+            .replace(new RegExp(`^${escapeReg(player)}\\s*[:：]\\s*`, 'i'), '')
+            .trim();
+
+        if (!t) continue;
+
+        // Reject if it claims to be the player
+        const claimsPlayer = player.length >= 1 && (
+            new RegExp(`^(我是|我叫)\\s*${escapeReg(player)}`).test(t)
+            || new RegExp(`以\\s*${escapeReg(player)}\\s*的身份`).test(t)
+        );
+        if (claimsPlayer) continue;
+
+        // Reject leftover "玩家名:" role prefixes
+        if (player && (t.startsWith(`${player}：`) || t.startsWith(`${player}:`))) continue;
+
+        out.push(t);
+    }
+    return out.length ? out : bubbles.map((b) => String(b || '').trim()).filter(Boolean);
+}
+
+function escapeReg(s) {
+    return String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Format full Momo DM history for the model (no message-count cap).
+ * Labels are explicit so the model does not swap player / NPC identity.
+ */
+function formatMomoHistory(history, peerName, playerName) {
+    const list = Array.isArray(history) ? history : [];
+    if (!list.length) return '(尚无聊天记录)';
+    return list
+        .map((m) => {
+            const isPlayer = m.from === 'me';
+            const who = isPlayer ? `玩家「${playerName}」` : `你「${peerName}」`;
+            return `${who}: ${String(m.text || '').trim()}`;
+        })
+        .filter((line) => !line.endsWith(': '))
+        .join('\n');
+}
+
+/**
+ * Generate NPC reply bubble(s) via ApiClient (isolated from main chat).
+ * Returns 1–4 message strings. Never uses local canned replies —
+ * throws with a stable code when generation fails.
  * @returns {Promise<string[]>}
  */
 export async function generateNpcReplies(opts) {
     const { peer, history, userText, myProfile, useAi = true } = opts;
 
-    if (useAi) {
-        try {
-            ensureGenerationGuard();
-            const status = getApiStatus();
-
-            if (status.online) {
-                const bundle = await buildInteractionContext({
-                    peer,
-                    userText,
-                    momoHistory: history,
-                });
-                const loreBlock = formatContextForPrompt(bundle);
-
-                const momoRecent = (history || [])
-                    .slice(-12)
-                    .map((m) => `${m.from === 'me' ? (myProfile.nickname || bundle.persona.name || '玩家') : peer.nickname}: ${m.text}`)
-                    .join('\n');
-
-                const systemPrompt = [
-                    '你正在「陌陌」社交 App 里扮演一位真实用户，与玩家私聊。',
-                    '像真人微信/陌陌聊天：可一次回 1 条，也可连发 2–4 条短消息（拆开更自然）。',
-                    '规则：',
-                    '- 只输出 JSON 字符串数组，例如 ["哈哈哈","你明天有空吗"]',
-                    '- 每条很短口语，不要旁白、不要引号包裹整段、不要 OOC 说明',
-                    '- 简单招呼 → 通常 1 条；兴奋/解释/追问 → 2–3 条；少用 4 条',
-                    '- 可以自然引用世界书与角色设定，但不要生硬背设定',
-                    '',
-                    `【你的陌陌资料】`,
-                    `昵称：${peer.nickname}；年龄：${peer.age}；城市：${peer.city}；性别：${peer.gender === 'female' ? '女' : '男'}`,
-                    `简介：${peer.bio || '无'}`,
-                    `标签：${(peer.tags || []).join('、') || '无'}`,
-                    peer.persona ? `完整人设：${peer.persona}` : '',
-                    peer.speechStyle ? `对话风格：${peer.speechStyle}` : '',
-                    peer.homepage?.about ? `主页关于我：${peer.homepage.about}` : '',
-                    peer.homepage?.job ? `职业：${peer.homepage.job}` : '',
-                    '',
-                    loreBlock,
-                ].filter(Boolean).join('\n');
-
-                const prompt = [
-                    `玩家陌陌昵称：${myProfile.nickname || bundle.persona.name || '旅人'}`,
-                    '【陌陌私聊最近记录】',
-                    momoRecent || '(无)',
-                    `玩家刚说：${userText}`,
-                    '请输出 JSON 字符串数组作为回复（1–4 条）：',
-                ].join('\n');
-
-                const result = await callMomoGenerate(systemPrompt, prompt, 280);
-                const bubbles = parseReplyBubbles(result);
-                if (bubbles.length) return bubbles;
-            } else {
-                console.warn('[st-momo] ST API offline, using fallback reply');
-            }
-        } catch (e) {
-            console.warn('[st-momo] AI reply failed, using fallback', e);
-        }
+    if (!useAi) {
+        throw Object.assign(new Error('已关闭 AI 回复'), { code: 'ai_disabled' });
     }
 
-    return [pick(FALLBACK_REPLIES)];
+    ensureGenerationGuard();
+    const status = getApiStatus();
+    if (!status.online) {
+        throw Object.assign(new Error('酒馆 API 未在线'), { code: 'api_offline' });
+    }
+
+    try {
+        const bundle = await buildInteractionContext({
+            peer,
+            userText,
+            momoHistory: history,
+        });
+        const loreBlock = formatContextForPrompt(bundle, { forNpcChat: true });
+
+        const npcName = String(peer?.nickname || '对方').trim() || '对方';
+        const playerName = String(
+            myProfile?.nickname || bundle.persona?.name || '旅人',
+        ).trim() || '旅人';
+        const genderLabel = peer?.gender === 'female' ? '女' : '男';
+
+        const momoHistoryText = formatMomoHistory(history, npcName, playerName);
+
+        const identityLock = [
+            `【身份锁定｜必须遵守】`,
+            `你的名字是「${npcName}」，性别${genderLabel}，年龄${peer?.age ?? '?'}，城市${peer?.city || '未知'}。`,
+            `你正在陌陌里以「${npcName}」的身份与玩家「${playerName}」私聊。`,
+            `你 ≠ 玩家「${playerName}」，也 ≠ 酒馆主线角色卡里的角色（除非资料明确写你就是）。`,
+            `- 只用第一人称说「${npcName}」会说的话；禁止自称「${playerName}」或扮演玩家`,
+            `- 禁止替玩家说话、禁止续写玩家台词、禁止输出玩家视角旁白`,
+            `- 历史里「玩家「${playerName}」:」是对方说的；「你「${npcName}」:」才是你说过的`,
+        ].join('\n');
+
+        const systemPrompt = [
+            identityLock,
+            '',
+            '你正在「陌陌」社交 App 私聊。像真人微信/陌陌：可回 1 条，也可连发 2–4 条短消息。',
+            '规则：',
+            '- 只输出 JSON 字符串数组，例如 ["哈哈哈","你明天有空吗"]',
+            '- 每条很短口语，不要旁白、不要引号包裹整段、不要 OOC 说明',
+            '- 简单招呼 → 通常 1 条；兴奋/解释/追问 → 2–3 条；少用 4 条',
+            '- 可自然呼应下方背景设定，但不要生硬背设定，更不要变成别人',
+            '',
+            `【你（${npcName}）的陌陌资料】`,
+            `昵称：${npcName}；年龄：${peer.age}；城市：${peer.city}；性别：${genderLabel}`,
+            `简介：${peer.bio || '无'}`,
+            `标签：${(peer.tags || []).join('、') || '无'}`,
+            peer.persona ? `完整人设：${peer.persona}` : '',
+            peer.speechStyle ? `对话风格：${peer.speechStyle}` : '',
+            peer.homepage?.about ? `主页关于我：${peer.homepage.about}` : '',
+            peer.homepage?.job ? `职业：${peer.homepage.job}` : '',
+            '',
+            loreBlock,
+            '',
+            identityLock,
+        ].filter(Boolean).join('\n');
+
+        const prompt = [
+            `对方（玩家）陌陌昵称：${playerName}`,
+            `你（NPC）陌陌昵称：${npcName}`,
+            '【陌陌私聊完整记录】（从早到晚；按身份标签区分说话人）',
+            momoHistoryText,
+            `玩家「${playerName}」刚说：${userText}`,
+            `请以「${npcName}」的身份回复，只输出 JSON 字符串数组（1–4 条），不要输出玩家的话：`,
+        ].join('\n');
+
+        const result = await callMomoGenerate(systemPrompt, prompt, 280);
+        const bubbles = sanitizeNpcBubbles(parseReplyBubbles(result), {
+            npcName,
+            playerName,
+        });
+        if (bubbles.length) return bubbles;
+
+        throw Object.assign(new Error('AI 未返回有效内容'), { code: 'gen_empty' });
+    } catch (e) {
+        if (e?.code) throw e;
+        console.warn('[st-momo] AI reply failed', e);
+        throw Object.assign(new Error(e?.message || '回复生成失败'), {
+            code: 'gen_failed',
+            cause: e,
+        });
+    }
 }
 
 /**
- * Backward-compatible single-string reply (joins bubbles with space if needed).
- * Prefer generateNpcReplies for chat UI.
+ * Single-string reply. Throws on failure (no local canned text).
  */
 export async function generateNpcReply(opts) {
     const list = await generateNpcReplies(opts);
-    return list[0] || pick(FALLBACK_REPLIES);
+    if (!list?.[0]) {
+        throw Object.assign(new Error('AI 未返回有效内容'), { code: 'gen_empty' });
+    }
+    return list[0];
 }
 
 /**

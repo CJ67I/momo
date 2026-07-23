@@ -25,6 +25,7 @@ function farDistance() {
 
 function cardToUser(card, { nearby = false } = {}) {
     const user = createNpc(card.gender, card.nickname, { city: card.city });
+    if (Number.isFinite(Number(card.age))) user.age = Number(card.age);
     user.bio = card.bio || '';
     user.distance = nearby ? nearbyDistance() : farDistance();
     user.sameCity = Boolean(nearby);

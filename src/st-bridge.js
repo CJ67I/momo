@@ -285,23 +285,45 @@ export async function buildInteractionContext(opts = {}) {
     };
 }
 
-export function formatContextForPrompt(bundle) {
+/**
+ * @param {object} bundle
+ * @param {{ forNpcChat?: boolean }} [opts]
+ *   forNpcChat: reframe ST persona/card as background only — NPC must not become the player.
+ */
+export function formatContextForPrompt(bundle, opts = {}) {
+    const forNpc = Boolean(opts.forNpcChat);
     const lines = [];
+    const npcName = String(bundle.peer?.nickname || '').trim();
 
-    lines.push('## 玩家人设（酒馆 Persona）');
+    if (forNpc) {
+        lines.push('## 背景参考（仅供剧情一致；下列人物都不是「你」）');
+        lines.push(`你在陌陌里的身份始终是「${npcName || '当前 NPC'}」，不要变成下列任何人。`);
+    }
+
+    lines.push(forNpc ? '\n## 对方玩家（酒馆 Persona，聊天对象）' : '## 玩家人设（酒馆 Persona）');
     if (bundle.persona?.name || bundle.persona?.description) {
         lines.push(`名称：${bundle.persona.name || '玩家'}`);
         if (bundle.persona.description) lines.push(bundle.persona.description);
+        if (forNpc) {
+            lines.push('（以上是对方，不是你；禁止用对方的口吻/自称回复）');
+        }
     } else {
         lines.push('（未读取到 Persona，使用陌陌资料）');
     }
 
-    lines.push('\n## 当前角色卡');
+    lines.push(forNpc ? '\n## 主线角色卡（背景参考，默认不是你）' : '\n## 当前角色卡');
     if (bundle.character?.name) {
         lines.push(`角色名：${bundle.character.name}`);
         if (bundle.character.description) lines.push(`描述：${bundle.character.description}`);
         if (bundle.character.personality) lines.push(`性格：${bundle.character.personality}`);
         if (bundle.character.scenario) lines.push(`场景：${bundle.character.scenario}`);
+        if (forNpc) {
+            const sameName = npcName && bundle.character.name
+                && npcName === String(bundle.character.name).trim();
+            lines.push(sameName
+                ? '（昵称与主线角色相同：可对齐其设定，但仍以陌陌资料为准）'
+                : '（这是酒馆主线角色，不是你；不要用该角色名自称）');
+        }
     } else {
         lines.push('（当前未选中角色卡）');
     }
@@ -312,14 +334,22 @@ export function formatContextForPrompt(bundle) {
     lines.push('\n## 酒馆主聊天最近记录');
     if (bundle.stChat?.length) {
         for (const m of bundle.stChat.slice(-12)) {
-            lines.push(`${m.isUser ? '玩家' : m.name || '角色'}: ${m.text}`);
+            const tag = m.isUser ? '主线·玩家' : `主线·${m.name || '角色'}`;
+            lines.push(`${tag}: ${m.text}`);
+        }
+        if (forNpc) {
+            lines.push('（主线记录只作背景；陌陌回复不要切换成主线角色或玩家）');
         }
     } else {
         lines.push('（暂无主聊天记录）');
     }
 
     lines.push('\n## 互通说明');
-    lines.push('你在陌陌内回复时，应与上述主线人设/剧情保持一致；不要否认主聊天里已发生的事。');
+    if (forNpc) {
+        lines.push('保持与主线剧情不矛盾，但输出时你永远是陌陌里的自己；不要否认主聊天已发生的事，也不要冒充玩家。');
+    } else {
+        lines.push('你在陌陌内回复时，应与上述主线人设/剧情保持一致；不要否认主聊天里已发生的事。');
+    }
 
     return lines.join('\n');
 }

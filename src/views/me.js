@@ -75,7 +75,7 @@ export class MeView {
             ? '未检测到酒馆上下文（本地预览模式）'
             : apiOk
                 ? `已接入 · ${api.mainApi || 'api'} · ${api.modelHint || api.onlineStatus}`
-                : `未在线 · ${api.mainApi || 'api'} · ${api.onlineStatus}（NPC 将用本地话术回复）`;
+                : `未在线 · ${api.mainApi || 'api'} · ${api.onlineStatus}（私聊/动态生成将提示失败）`;
 
         const opposite = oppositeGender(p.gender) === 'female' ? '女' : '男';
         const vNow = getVirtualNow(settings);

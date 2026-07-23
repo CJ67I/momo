@@ -17,21 +17,25 @@ async function generateProactiveBubbles(app, peer) {
     const settings = app.store.getSettings();
 
     if (settings.useAiReply !== false && canUseTavernApi()) {
-        const style = peer.speechStyle ? `对话风格：${peer.speechStyle}` : '';
-        const persona = peer.persona ? `人物设定：${peer.persona}` : '';
-        const bubbles = await generateNpcReplies({
-            peer,
-            history,
-            userText: [
-                '（系统提示：这是你主动找玩家聊天，不是回复。',
-                '请自然开启新话题或关心近况。可 1 条，也可连发 2 条短消息。）',
-                style,
-                persona,
-            ].filter(Boolean).join('\n'),
-            myProfile,
-            useAi: true,
-        });
-        if (bubbles?.length) return bubbles.slice(0, 2);
+        try {
+            const style = peer.speechStyle ? `对话风格：${peer.speechStyle}` : '';
+            const persona = peer.persona ? `人物设定：${peer.persona}` : '';
+            const bubbles = await generateNpcReplies({
+                peer,
+                history,
+                userText: [
+                    '（系统提示：这是你主动找玩家聊天，不是回复。',
+                    '请自然开启新话题或关心近况。可 1 条，也可连发 2 条短消息。）',
+                    style,
+                    persona,
+                ].filter(Boolean).join('\n'),
+                myProfile,
+                useAi: true,
+            });
+            if (bubbles?.length) return bubbles.slice(0, 2);
+        } catch (e) {
+            console.warn('[st-momo] proactive gen failed', e);
+        }
     }
     return null;
 }
@@ -60,7 +64,7 @@ async function tick(app) {
         }
     }
     if (!target) return;
-    if (app.chatView?.sending) return;
+    if (app.chatView?.sending || app.chatView?.light === 'yellow') return;
 
     busy = true;
     try {

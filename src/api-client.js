@@ -56,13 +56,25 @@ function isStreamingActive() {
     }
 }
 
+/** Soft-heal sticky GENERATION_STARTED when UI already idle. */
+function healMainChatBusyFlag() {
+    if (!mainChatBusy) return;
+    if (isStreamingActive() || isStopButtonVisible()) return;
+    mainChatBusy = false;
+}
+
 export function isApiClientBusy() {
     return activeCount > 0;
 }
 
 /** True while SillyTavern main chat is generating / streaming. */
 export function isMainChatGenerating() {
-    return mainChatBusy || isStreamingActive() || isStopButtonVisible();
+    if (isStreamingActive() || isStopButtonVisible()) {
+        mainChatBusy = true;
+        return true;
+    }
+    healMainChatBusyFlag();
+    return mainChatBusy;
 }
 
 function abortInflightMomo(reason = 'main_chat_started') {
@@ -93,7 +105,10 @@ export function ensureGenerationGuard() {
     const es = ctx?.eventSource;
     const et = ctx?.eventTypes || ctx?.event_types;
     if (!es?.on || !et) {
-        // Retry later — ST may not be ready at first mount
+        // ST may not be ready at first mount — retry shortly
+        setTimeout(() => {
+            if (!guardBound) ensureGenerationGuard();
+        }, 1500);
         return;
     }
 
@@ -127,10 +142,20 @@ export function ensureGenerationGuard() {
     guardBound = true;
 }
 
-async function waitWhileMainBusy(timeoutMs = 180_000) {
+async function waitWhileMainBusy(timeoutMs = 120_000) {
     ensureGenerationGuard();
     const t0 = Date.now();
+    let idlePolls = 0;
     while (isMainChatGenerating()) {
+        if (!isStreamingActive() && !isStopButtonVisible()) {
+            idlePolls += 1;
+            if (idlePolls >= 3) {
+                mainChatBusy = false;
+                break;
+            }
+        } else {
+            idlePolls = 0;
+        }
         if (Date.now() - t0 > timeoutMs) {
             throw new Error('main_chat_busy');
         }
@@ -285,15 +310,16 @@ function extractText(data) {
     const choice = data?.choices?.[0];
     if (choice?.message?.content != null) {
         const c = choice.message.content;
-        if (typeof c === 'string') return c.trim();
+        if (typeof c === 'string' && c.trim()) return c.trim();
         if (Array.isArray(c)) {
-            return c.map((p) => (typeof p === 'string' ? p : p?.text || '')).join('').trim();
+            const joined = c.map((p) => (typeof p === 'string' ? p : p?.text || '')).join('').trim();
+            if (joined) return joined;
         }
     }
-    if (typeof choice?.text === 'string') return choice.text.trim();
-    if (typeof data?.content === 'string') return data.content.trim();
-    if (typeof data?.response === 'string') return data.response.trim();
-    // Some providers put text in reasoning-only; still treat as empty for callers
+    if (typeof choice?.text === 'string' && choice.text.trim()) return choice.text.trim();
+    if (typeof data?.content === 'string' && data.content.trim()) return data.content.trim();
+    if (typeof data?.response === 'string' && data.response.trim()) return data.response.trim();
+    if (typeof data?.text === 'string' && data.text.trim()) return data.text.trim();
     return '';
 }
 
@@ -309,10 +335,18 @@ function buildGeneratePayload(oai, messages, maxTokens) {
     const pres = Number(oai.pres_pen_openai);
     const tokens = Math.max(16, Math.min(4096, Number(maxTokens) || Number(oai.openai_max_tokens) || 600));
 
+    let finalMessages = messages;
+    const isO1Family = /^(o1|openai\/o1)/i.test(model);
+    if (isO1Family) {
+        finalMessages = messages.map((m) => (
+            m.role === 'system' ? { role: 'user', content: m.content } : m
+        ));
+    }
+
     /** @type {Record<string, unknown>} */
     const payload = {
         type: 'quiet',
-        messages,
+        messages: finalMessages,
         model,
         temperature: Number.isFinite(temp) ? temp : 1,
         frequency_penalty: Number.isFinite(freq) ? freq : 0,
@@ -326,6 +360,20 @@ function buildGeneratePayload(oai, messages, maxTokens) {
         group_names: [],
         include_reasoning: false,
     };
+
+    const needsCompletionTokens = (
+        /^(o1|o3|o4)/i.test(model)
+        || /^openai\/(o1|o3|o4)/i.test(model)
+        || /gpt-5/i.test(model)
+    );
+    if (needsCompletionTokens) {
+        payload.max_completion_tokens = tokens;
+        delete payload.max_tokens;
+        delete payload.temperature;
+        delete payload.top_p;
+        delete payload.frequency_penalty;
+        delete payload.presence_penalty;
+    }
 
     const reverseProxy = String(oai.reverse_proxy || domVal('openai_reverse_proxy') || '').trim();
     const proxyPassword = String(oai.proxy_password || domVal('openai_proxy_password') || '');

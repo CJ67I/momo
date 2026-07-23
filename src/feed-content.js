@@ -1,6 +1,6 @@
 /**
- * AI-only feed generation — batch-first (1 API call ≈ 8 posts).
- * No local post-text libraries.
+ * AI-only feed generation — compact line format (fast + cheap tokens).
+ * One API call ≈ one channel page. No local post-text libraries.
  */
 
 import { callMomoGenerate, ensureGenerationGuard } from './api-client.js';
@@ -8,7 +8,8 @@ import { canUseTavernApi } from './ai.js';
 import { normalizeGender, shuffle, uid } from './utils.js';
 
 export const FEED_CHANNELS = Object.freeze(['recommend', 'nearby', 'friends']);
-export const FEED_PAGE_SIZE = 8;
+/** Slightly fewer cards → less output tokens, faster refresh. */
+export const FEED_PAGE_SIZE = 6;
 
 /** City labels for recommend diversification (not post content). */
 export const CITY_POOL = Object.freeze([
@@ -26,6 +27,9 @@ export const DEFAULT_FEED_PROMPT = [
     '内容要具体到场景细节，避免空泛的「今天天气真好」「又是普通的一天」。',
 ].join('\n');
 
+/** Short style hint — avoid pasting the full DEFAULT_FEED_PROMPT every call. */
+const STYLE_HINT = '口语短动态18-48字，有互动钩子；禁鸡汤/模板腔/引号/解释。';
+
 function getSettingsBucket() {
     try {
         return window.SillyTavern?.getContext?.()?.extensionSettings?.['st-momo']?.settings || {};
@@ -36,7 +40,9 @@ function getSettingsBucket() {
 
 export function getFeedContentSettings(settings = null) {
     const s = settings || getSettingsBucket();
-    const prompt = String(s.feedPrompt ?? '').trim() || DEFAULT_FEED_PROMPT;
+    const custom = String(s.feedPrompt ?? '').trim();
+    // Only inject custom prompt when user changed it; default stays as STYLE_HINT
+    const prompt = custom && custom !== DEFAULT_FEED_PROMPT ? custom.slice(0, 280) : STYLE_HINT;
     return { prompt };
 }
 
@@ -100,7 +106,7 @@ export function pickDistinctCities(count, avoidCity = '') {
     return out;
 }
 
-async function callGenerateRaw(systemPrompt, userPrompt, responseLength = 900) {
+async function callFeedModel(systemPrompt, userPrompt, responseLength = 520) {
     ensureGenerationGuard();
     try {
         return await callMomoGenerate(systemPrompt, userPrompt, responseLength);
@@ -127,7 +133,60 @@ function extractJsonArray(raw) {
 }
 
 /**
+ * Parse compact pipe lines: field1|field2|...
+ * Also accepts JSON array fallback.
+ * @param {string} raw
+ * @param {number} fieldCount
+ * @returns {string[][]}
+ */
+function parsePipeOrJson(raw, fieldCount) {
+    const text = String(raw || '').trim();
+    if (!text) return [];
+
+    const lines = text
+        .split(/[\n\r]+/)
+        .map((l) => l.replace(/^\s*\d+[\.\)、]\s*/, '').trim())
+        .filter((l) => l && !l.startsWith('```') && !/^输出|示例|格式/i.test(l));
+
+    const pipeRows = [];
+    for (const line of lines) {
+        if (!line.includes('|')) continue;
+        const parts = line.split('|').map((p) => p.trim());
+        if (parts.length >= fieldCount) {
+            pipeRows.push(parts.slice(0, fieldCount));
+        } else if (parts.length >= 2) {
+            // pad short rows
+            while (parts.length < fieldCount) parts.push('');
+            pipeRows.push(parts);
+        }
+    }
+    if (pipeRows.length) return pipeRows;
+
+    const json = extractJsonArray(text);
+    if (!json?.length) return [];
+
+    // Map common JSON shapes into ordered fields by caller
+    return json.map((row) => {
+        if (Array.isArray(row)) {
+            const parts = row.map((x) => String(x ?? '').trim());
+            while (parts.length < fieldCount) parts.push('');
+            return parts.slice(0, fieldCount);
+        }
+        if (row && typeof row === 'object') {
+            // Prefer known keys in a stable order when present
+            const keys = Object.keys(row);
+            if (keys.includes('nickname') || keys.includes('text') || keys.includes('id')) {
+                return null; // signal: use object mapper in caller
+            }
+            return keys.map((k) => String(row[k] ?? '').trim()).slice(0, fieldCount);
+        }
+        return null;
+    }).filter(Boolean);
+}
+
+/**
  * Batch: recommend feed (random cities pre-assigned).
+ * Output format: nickname|age|city|bio|text  (one per line)
  * @returns {Promise<object[]>}
  */
 export async function generateRecommendBatch(profile, count = FEED_PAGE_SIZE) {
@@ -138,50 +197,72 @@ export async function generateRecommendBatch(profile, count = FEED_PAGE_SIZE) {
     const myCity = String(profile?.city || '').trim();
     const cities = pickDistinctCities(count, myCity);
     const cfg = getFeedContentSettings();
+    const genderLabel = targetGender === 'female' ? '女' : '男';
 
     const systemPrompt = [
-        '你是陌陌「推荐」信息流批量生成器。',
-        '只输出一个 JSON 数组，不要 markdown，不要解释。',
-        `必须正好 ${count} 个对象，字段：nickname, age, city, bio, text。`,
-        'text：18-48 字动态，必须有互动钩子（提问/邀约/吐槽求接话）。',
-        '每条 city 必须严格使用给定城市，禁止全部写成同一城，禁止抄浏览者城市除非名单里有。',
-        'nickname 要像真实网名，彼此不要雷同。',
+        '陌陌推荐流生成器。只输出多行，每行格式：',
+        '昵称|年龄|城市|简介|动态',
+        `正好 ${count} 行。不要 JSON、不要 markdown、不要解释。`,
+        STYLE_HINT,
+        '城市必须用给定名单，勿全写成同一城。昵称彼此不同。',
     ].join('\n');
 
-    const slots = cities.map((city, i) => `${i + 1}. city 必须是「${city}」`).join('\n');
+    const slots = cities.map((city, i) => `${i + 1}.${city}`).join(' ');
     const userPrompt = [
         cfg.prompt,
-        '',
-        `浏览者：${profile?.nickname || '旅人'}（${myGender === 'female' ? '女' : '男'}，住在 ${myCity || '未知'}）。`,
-        `生成 ${count} 名异性（${targetGender === 'female' ? '女' : '男'}）推荐卡片。`,
-        `唯一批次 ${uid('rec').slice(-6)}`,
-        '城市分配（必须遵守）：',
-        slots,
-        '输出示例：[{"nickname":"晚风不回消息","age":24,"city":"杭州","bio":"徒步","text":"周末有人想去爬山吗，别只回哈哈"}]',
+        `浏览者${profile?.nickname || '旅人'}（${myGender === 'female' ? '女' : '男'}·${myCity || '?'}）`,
+        `生成${count}名异性（${genderLabel}）`,
+        `城市顺序：${slots}`,
+        `批次${uid('r').slice(-5)}`,
+        '例：晚风不回消息|24|杭州|徒步|周末有人爬山吗别只回哈哈',
     ].join('\n');
 
-    let rows = extractJsonArray(await callGenerateRaw(systemPrompt, userPrompt, 1200));
-    if (!rows?.length) {
-        rows = extractJsonArray(await callGenerateRaw(systemPrompt, `${userPrompt}\n\n上次未得到合法 JSON 数组，请重新只输出 JSON 数组：`, 1200));
+    let raw = await callFeedModel(systemPrompt, userPrompt, 560);
+    let rows = parsePipeOrJson(raw, 5);
+
+    // JSON object fallback
+    if (!rows.length) {
+        const arr = extractJsonArray(raw);
+        if (arr?.length) {
+            rows = arr.map((row) => [
+                String(row?.nickname || ''),
+                String(row?.age ?? ''),
+                String(row?.city || ''),
+                String(row?.bio || ''),
+                String(row?.text || ''),
+            ]);
+        }
     }
-    if (!rows?.length) return [];
+
+    if (!rows.length) {
+        raw = await callFeedModel(systemPrompt, `${userPrompt}\n只输出${count}行 昵称|年龄|城市|简介|动态`, 560);
+        rows = parsePipeOrJson(raw, 5);
+        if (!rows.length) {
+            const arr = extractJsonArray(raw);
+            if (arr?.length) {
+                rows = arr.map((row) => [
+                    String(row?.nickname || ''),
+                    String(row?.age ?? ''),
+                    String(row?.city || ''),
+                    String(row?.bio || ''),
+                    String(row?.text || ''),
+                ]);
+            }
+        }
+    }
+    if (!rows.length) return [];
 
     const out = [];
-    const usedNames = new Set();
     for (let i = 0; i < count; i++) {
-        const row = rows[i] || {};
-        const nickname = sanitizeNickname(row.nickname) || `推荐用户${i + 1}`;
-        if (usedNames.has(nickname) && sanitizeNickname(row.nickname)) {
-            // keep anyway with suffix
-        }
-        usedNames.add(nickname);
-        const text = sanitizeFeedText(row.text);
+        const row = rows[i] || [];
+        const nickname = sanitizeNickname(row[0]) || `推荐用户${i + 1}`;
+        const text = sanitizeFeedText(row[4]);
         if (!text || text.length < 4) continue;
         out.push({
             nickname,
-            age: clampAge(row.age),
-            city: cities[i] || sanitizeNickname(row.city) || '未知',
-            bio: String(row.bio || '').trim().slice(0, 40),
+            age: clampAge(row[1]),
+            city: cities[i] || sanitizeNickname(row[2]) || '未知',
+            bio: String(row[3] || '').trim().slice(0, 40),
             text,
             gender: targetGender,
         });
@@ -191,6 +272,7 @@ export async function generateRecommendBatch(profile, count = FEED_PAGE_SIZE) {
 
 /**
  * Batch: nearby feed — all authors locked to profile city.
+ * Format: nickname|age|bio|text
  * @returns {Promise<object[]>}
  */
 export async function generateNearbyBatch(profile, count = FEED_PAGE_SIZE) {
@@ -200,42 +282,64 @@ export async function generateNearbyBatch(profile, count = FEED_PAGE_SIZE) {
     const targetGender = myGender === 'female' ? 'male' : 'female';
     const city = String(profile?.city || '').trim() || '同城';
     const cfg = getFeedContentSettings();
+    const genderLabel = targetGender === 'female' ? '女' : '男';
 
     const systemPrompt = [
-        '你是陌陌「附近/同城」信息流批量生成器。',
-        '只输出一个 JSON 数组，不要 markdown，不要解释。',
-        `必须正好 ${count} 个对象，字段：nickname, age, bio, text。`,
-        `所有人城市都是「${city}」，不要输出 city 字段。`,
-        `text 必须带「${city}」同城生活感，并含同城话题钩子（本地店/街区/通勤/活动），可带短 #话题。`,
-        'nickname 彼此不同，像真实网名。',
+        '陌陌附近/同城流生成器。只输出多行，每行：',
+        '昵称|年龄|简介|动态',
+        `正好 ${count} 行。不要 JSON/markdown/解释。`,
+        STYLE_HINT,
+        `动态要有「${city}」同城感（店/街区/通勤/活动），可带短#话题。`,
     ].join('\n');
 
     const userPrompt = [
         cfg.prompt,
-        '',
-        `浏览者住在「${city}」，要看同城附近动态。`,
-        `生成 ${count} 名异性（${targetGender === 'female' ? '女' : '男'}）同城用户动态。`,
-        `唯一批次 ${uid('near').slice(-6)}`,
-        `输出示例：[{"nickname":"地铁末班车","age":26,"bio":"设计师","text":"${city}这雨也太大了 #同城吐槽 有伞的路过吗"}]`,
+        `同城「${city}」，${count}名异性（${genderLabel}）`,
+        `批次${uid('n').slice(-5)}`,
+        `例：地铁末班车|26|设计师|${city}这雨也太大了 #同城吐槽`,
     ].join('\n');
 
-    let rows = extractJsonArray(await callGenerateRaw(systemPrompt, userPrompt, 1200));
-    if (!rows?.length) {
-        rows = extractJsonArray(await callGenerateRaw(systemPrompt, `${userPrompt}\n\n请只输出合法 JSON 数组：`, 1200));
+    let raw = await callFeedModel(systemPrompt, userPrompt, 520);
+    let rows = parsePipeOrJson(raw, 4);
+    if (!rows.length) {
+        const arr = extractJsonArray(raw);
+        if (arr?.length) {
+            rows = arr.map((row) => [
+                String(row?.nickname || ''),
+                String(row?.age ?? ''),
+                String(row?.bio || ''),
+                String(row?.text || ''),
+            ]);
+        }
     }
-    if (!rows?.length) return [];
+    if (!rows.length) {
+        raw = await callFeedModel(systemPrompt, `${userPrompt}\n只输出${count}行 昵称|年龄|简介|动态`, 520);
+        rows = parsePipeOrJson(raw, 4);
+        if (!rows.length) {
+            const arr = extractJsonArray(raw);
+            if (arr?.length) {
+                rows = arr.map((row) => [
+                    String(row?.nickname || ''),
+                    String(row?.age ?? ''),
+                    String(row?.bio || ''),
+                    String(row?.text || ''),
+                ]);
+            }
+        }
+    }
+    if (!rows.length) return [];
 
     const out = [];
     for (let i = 0; i < Math.min(count, rows.length); i++) {
-        const row = rows[i] || {};
-        const nickname = sanitizeNickname(row.nickname) || `同城${i + 1}`;
-        const text = sanitizeFeedText(row.text);
+        const row = rows[i] || [];
+        const nickname = sanitizeNickname(row[0]) || `同城${i + 1}`;
+        const text = sanitizeFeedText(row[3]);
         if (!text || text.length < 4) continue;
         out.push({
             nickname,
-            age: clampAge(row.age),
+            age: clampAge(row[1]),
             city,
-            bio: String(row.bio || '').trim().slice(0, 40),
+            bio: String(row[2] || '').trim().slice(0, 40),
             text,
             gender: targetGender,
         });
@@ -244,7 +348,8 @@ export async function generateNearbyBatch(profile, count = FEED_PAGE_SIZE) {
 }
 
 /**
- * Batch: friend posts for sampled friends.
+ * Batch: friend posts.
+ * Format: id|text
  * @param {object[]} friends
  * @returns {Promise<{id:string,text:string}[]>}
  */
@@ -255,56 +360,66 @@ export async function generateFriendsBatch(friends) {
     const list = friends.slice(0, FEED_PAGE_SIZE);
 
     const systemPrompt = [
-        '你是陌陌「好友动态」批量生成器。',
-        '只输出一个 JSON 数组，不要 markdown，不要解释。',
-        '每个对象字段：id, text。id 必须原样使用给定好友 id。',
-        'text：该好友会发的 18-48 字动态，贴合其人设，不要广告腔。',
+        '陌陌好友动态生成器。只输出多行，每行：',
+        'id|动态',
+        'id 必须原样使用给定 id。不要 JSON/markdown/解释。',
+        STYLE_HINT,
     ].join('\n');
 
-    const roster = list.map((f, i) => {
-        const bits = [
-            `${i + 1}. id=${f.id}`,
-            `昵称=${f.nickname}`,
-            `城=${f.city || ''}`,
-            `简介=${(f.bio || '').slice(0, 40)}`,
-            f.persona ? `人设=${String(f.persona).slice(0, 80)}` : '',
-        ].filter(Boolean);
-        return bits.join('；');
+    const roster = list.map((f) => {
+        const tip = [
+            f.nickname,
+            f.city || '',
+            (f.bio || '').slice(0, 24),
+            f.persona ? String(f.persona).slice(0, 40) : '',
+        ].filter(Boolean).join('/');
+        return `${f.id}（${tip}）`;
     }).join('\n');
 
     const userPrompt = [
         cfg.prompt,
-        '',
-        `为下列 ${list.length} 位好友各写一条动态：`,
+        `为以下${list.length}位好友各写1条：`,
         roster,
-        `唯一批次 ${uid('fr').slice(-6)}`,
-        '输出示例：[{"id":"abc","text":"加班到现在，谁还没睡出来冒个泡"}]',
+        `批次${uid('f').slice(-5)}`,
+        '例：abc123|加班到现在谁还没睡冒个泡',
     ].join('\n');
 
-    let rows = extractJsonArray(await callGenerateRaw(systemPrompt, userPrompt, 1000));
-    if (!rows?.length) {
-        rows = extractJsonArray(await callGenerateRaw(systemPrompt, `${userPrompt}\n\n请只输出合法 JSON 数组：`, 1000));
+    let raw = await callFeedModel(systemPrompt, userPrompt, 420);
+    let rows = parsePipeOrJson(raw, 2);
+    if (!rows.length) {
+        const arr = extractJsonArray(raw);
+        if (arr?.length) {
+            rows = arr.map((row) => [String(row?.id || ''), String(row?.text || '')]);
+        }
     }
-    if (!rows?.length) return [];
+    if (!rows.length) {
+        raw = await callFeedModel(systemPrompt, `${userPrompt}\n只输出 id|动态`, 420);
+        rows = parsePipeOrJson(raw, 2);
+        if (!rows.length) {
+            const arr = extractJsonArray(raw);
+            if (arr?.length) {
+                rows = arr.map((row) => [String(row?.id || ''), String(row?.text || '')]);
+            }
+        }
+    }
+    if (!rows.length) return [];
 
     const byId = new Map(list.map((f) => [f.id, f]));
     const out = [];
     for (const row of rows) {
-        const id = String(row?.id || '').trim();
+        const id = String(row[0] || '').trim();
         if (!byId.has(id)) continue;
-        const text = sanitizeFeedText(row.text);
+        const text = sanitizeFeedText(row[1]);
         if (!text || text.length < 4) continue;
         out.push({ id, text });
     }
 
-    // Align missing friends by index fallback once
     if (out.length < list.length) {
         const got = new Set(out.map((x) => x.id));
         for (let i = 0; i < list.length; i++) {
             const f = list[i];
             if (got.has(f.id)) continue;
-            const row = rows[i];
-            const text = sanitizeFeedText(row?.text);
+            const text = sanitizeFeedText(rows[i]?.[1]);
             if (text && text.length >= 4) out.push({ id: f.id, text });
         }
     }
@@ -313,10 +428,8 @@ export async function generateFriendsBatch(friends) {
 }
 
 /**
- * Batch: match candidates — unique people via one API call (no local nickname pool).
- * @param {object} profile
- * @param {number} [count]
- * @param {{ avoidNames?: string[] }} [opts]
+ * Batch: match candidates — unique people via one API call.
+ * Format: nickname|age|bio|tag1/tag2|job
  * @returns {Promise<object[]>}
  */
 export async function generateMatchBatch(profile, count = FEED_PAGE_SIZE, opts = {}) {
@@ -325,37 +438,48 @@ export async function generateMatchBatch(profile, count = FEED_PAGE_SIZE, opts =
     const myGender = normalizeGender(profile?.gender);
     const targetGender = myGender === 'female' ? 'male' : 'female';
     const city = String(profile?.city || '').trim() || '同城';
-    const avoid = (opts.avoidNames || []).filter(Boolean).slice(-24);
+    const avoid = (opts.avoidNames || []).filter(Boolean).slice(-16);
+    const genderLabel = targetGender === 'female' ? '女' : '男';
 
     const systemPrompt = [
-        '你是陌陌「匹配」候选人批量生成器。',
-        '只输出一个 JSON 数组，不要 markdown，不要解释。',
-        `必须正好 ${count} 个对象，字段：nickname, age, bio, tags, job。`,
-        'tags 为 1-3 个短标签字符串数组；job 为短职业。',
-        'nickname 必须彼此不同，像 2020 年代真实网名，禁止古风、禁止「小X+数字」。',
-        'bio 一句口语简介（12-28 字），每人气质不同。',
-        `城市统一为「${city}」（不要输出 city 字段）。`,
+        '陌陌匹配候选人生成器。只输出多行，每行：',
+        '昵称|年龄|简介|标签|职业',
+        '标签用/分隔1-3个。不要 JSON/markdown/解释。',
+        '昵称像当代网名，彼此不同；禁古风、禁小X+数字。',
     ].join('\n');
 
     const userPrompt = [
-        `浏览者：${profile?.nickname || '旅人'}（${myGender === 'female' ? '女' : '男'}），想匹配异性。`,
-        `生成 ${count} 名异性（${targetGender === 'female' ? '女' : '男'}）候选人，住在「${city}」。`,
-        `唯一批次 ${uid('match').slice(-6)}`,
-        avoid.length ? `禁止使用这些已出现过的昵称：${avoid.join('、')}` : '',
-        '输出示例：[{"nickname":"晚风不回消息","age":24,"bio":"周末只想徒步和吃火锅","tags":["徒步","火锅"],"job":"设计师"}]',
+        `浏览者${profile?.nickname || '旅人'}，匹配${count}名异性（${genderLabel}）住「${city}」`,
+        avoid.length ? `禁用昵称：${avoid.join('、')}` : '',
+        `批次${uid('m').slice(-5)}`,
+        '例：晚风不回消息|24|周末徒步吃火锅|徒步/火锅|设计师',
     ].filter(Boolean).join('\n');
 
-    let rows = extractJsonArray(await callGenerateRaw(systemPrompt, userPrompt, 1100));
-    if (!rows?.length) {
-        rows = extractJsonArray(await callGenerateRaw(systemPrompt, `${userPrompt}\n\n请只输出合法 JSON 数组：`, 1100));
+    let raw = await callFeedModel(systemPrompt, userPrompt, 480);
+    let rows = parsePipeOrJson(raw, 5);
+    if (!rows.length) {
+        const arr = extractJsonArray(raw);
+        if (arr?.length) {
+            rows = arr.map((row) => [
+                String(row?.nickname || ''),
+                String(row?.age ?? ''),
+                String(row?.bio || ''),
+                Array.isArray(row?.tags) ? row.tags.join('/') : String(row?.tags || ''),
+                String(row?.job || ''),
+            ]);
+        }
     }
-    if (!rows?.length) return [];
+    if (!rows.length) {
+        raw = await callFeedModel(systemPrompt, `${userPrompt}\n只输出 昵称|年龄|简介|标签|职业`, 480);
+        rows = parsePipeOrJson(raw, 5);
+    }
+    if (!rows.length) return [];
 
     const out = [];
     const seen = new Set(avoid.map((n) => String(n).toLowerCase()));
     for (let i = 0; i < Math.min(count, rows.length); i++) {
-        const row = rows[i] || {};
-        let nickname = sanitizeNickname(row.nickname);
+        const row = rows[i] || [];
+        let nickname = sanitizeNickname(row[0]);
         if (!nickname || nickname.length < 2) continue;
         const key = nickname.toLowerCase();
         if (seen.has(key)) {
@@ -364,15 +488,17 @@ export async function generateMatchBatch(profile, count = FEED_PAGE_SIZE, opts =
         }
         seen.add(nickname.toLowerCase());
 
-        const tags = Array.isArray(row.tags)
-            ? row.tags.map((t) => String(t || '').trim()).filter(Boolean).slice(0, 3)
-            : [];
-        const bio = String(row.bio || '').trim().slice(0, 40);
-        const job = String(row.job || '').trim().slice(0, 20);
+        const tags = String(row[3] || '')
+            .split(/[/|,，、]/)
+            .map((t) => t.trim())
+            .filter(Boolean)
+            .slice(0, 3);
+        const bio = String(row[2] || '').trim().slice(0, 40);
+        const job = String(row[4] || '').trim().slice(0, 20);
 
         out.push({
             nickname,
-            age: clampAge(row.age),
+            age: clampAge(row[1]),
             city,
             bio: bio || (job ? `${job} · 在${city}` : `在${city}生活`),
             tags: tags.length ? tags : (job ? [job] : ['同城']),
@@ -383,7 +509,7 @@ export async function generateMatchBatch(profile, count = FEED_PAGE_SIZE, opts =
     return out;
 }
 
-/** @deprecated single-card path kept unused; batch APIs preferred */
+/** @deprecated */
 export async function resolveRecommendCard() {
     return null;
 }
