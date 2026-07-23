@@ -8,7 +8,7 @@ import { canUseTavernApi } from './ai.js';
 import { normalizeGender, shuffle, uid } from './utils.js';
 
 export const FEED_CHANNELS = Object.freeze(['recommend', 'nearby', 'friends']);
-/** Slightly fewer cards → less output tokens, faster refresh. */
+/** Cards per channel refresh. */
 export const FEED_PAGE_SIZE = 6;
 
 /** City labels for recommend diversification (not post content). */
@@ -19,17 +19,6 @@ export const CITY_POOL = Object.freeze([
     '长春', '哈尔滨', '石家庄', '南昌', '贵阳', '南宁', '海口', '兰州',
 ]);
 
-export const DEFAULT_FEED_PROMPT = [
-    '你是中文社交 App「陌陌」动态文案生成器。',
-    '必须严格按人物信息与栏目约束创作全新短动态，像真人随手发出。',
-    '口语自然，每条 18-48 字。',
-    '禁止引号、禁止解释、禁止复述设定、禁止鸡汤口号、禁止模板腔。',
-    '内容要具体到场景细节，避免空泛的「今天天气真好」「又是普通的一天」。',
-].join('\n');
-
-/** Short style hint — avoid pasting the full DEFAULT_FEED_PROMPT every call. */
-const STYLE_HINT = '口语短动态18-48字，有互动钩子；禁鸡汤/模板腔/引号/解释。';
-
 function getSettingsBucket() {
     try {
         return window.SillyTavern?.getContext?.()?.extensionSettings?.['st-momo']?.settings || {};
@@ -38,11 +27,10 @@ function getSettingsBucket() {
     }
 }
 
+/** Optional user feedPrompt from settings; empty = no fixed style. */
 export function getFeedContentSettings(settings = null) {
     const s = settings || getSettingsBucket();
-    const custom = String(s.feedPrompt ?? '').trim();
-    // Only inject custom prompt when user changed it; default stays as STYLE_HINT
-    const prompt = custom && custom !== DEFAULT_FEED_PROMPT ? custom.slice(0, 280) : STYLE_HINT;
+    const prompt = String(s.feedPrompt ?? '').trim().slice(0, 500);
     return { prompt };
 }
 
@@ -203,7 +191,6 @@ export async function generateRecommendBatch(profile, count = FEED_PAGE_SIZE) {
         '陌陌推荐流生成器。只输出多行，每行格式：',
         '昵称|年龄|城市|简介|动态',
         `正好 ${count} 行。不要 JSON、不要 markdown、不要解释。`,
-        STYLE_HINT,
         '城市必须用给定名单，勿全写成同一城。昵称彼此不同。',
     ].join('\n');
 
@@ -215,7 +202,7 @@ export async function generateRecommendBatch(profile, count = FEED_PAGE_SIZE) {
         `城市顺序：${slots}`,
         `批次${uid('r').slice(-5)}`,
         '例：晚风不回消息|24|杭州|徒步|周末有人爬山吗别只回哈哈',
-    ].join('\n');
+    ].filter(Boolean).join('\n');
 
     let raw = await callFeedModel(systemPrompt, userPrompt, 560);
     let rows = parsePipeOrJson(raw, 5);
@@ -288,7 +275,6 @@ export async function generateNearbyBatch(profile, count = FEED_PAGE_SIZE) {
         '陌陌附近/同城流生成器。只输出多行，每行：',
         '昵称|年龄|简介|动态',
         `正好 ${count} 行。不要 JSON/markdown/解释。`,
-        STYLE_HINT,
         `动态要有「${city}」同城感（店/街区/通勤/活动），可带短#话题。`,
     ].join('\n');
 
@@ -297,7 +283,7 @@ export async function generateNearbyBatch(profile, count = FEED_PAGE_SIZE) {
         `同城「${city}」，${count}名异性（${genderLabel}）`,
         `批次${uid('n').slice(-5)}`,
         `例：地铁末班车|26|设计师|${city}这雨也太大了 #同城吐槽`,
-    ].join('\n');
+    ].filter(Boolean).join('\n');
 
     let raw = await callFeedModel(systemPrompt, userPrompt, 520);
     let rows = parsePipeOrJson(raw, 4);
@@ -363,7 +349,6 @@ export async function generateFriendsBatch(friends) {
         '陌陌好友动态生成器。只输出多行，每行：',
         'id|动态',
         'id 必须原样使用给定 id。不要 JSON/markdown/解释。',
-        STYLE_HINT,
     ].join('\n');
 
     const roster = list.map((f) => {
@@ -382,7 +367,7 @@ export async function generateFriendsBatch(friends) {
         roster,
         `批次${uid('f').slice(-5)}`,
         '例：abc123|加班到现在谁还没睡冒个泡',
-    ].join('\n');
+    ].filter(Boolean).join('\n');
 
     let raw = await callFeedModel(systemPrompt, userPrompt, 420);
     let rows = parsePipeOrJson(raw, 2);

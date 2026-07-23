@@ -1,5 +1,4 @@
 import { canUseTavernApi } from '../ai.js';
-import { DEFAULT_FEED_PROMPT } from '../feed-content.js';
 import { createNpcFromCharacter } from '../npc-factory.js';
 import {
     getApiStatus,
@@ -151,16 +150,15 @@ export class MeView {
                 <div class="mm-card mm-bridge-card">
                     <h3>动态内容生成（纯 AI）</h3>
                     <p class="mm-muted" style="margin:0 0 8px;font-size:12px;line-height:1.5">
-                        刷新动态时会<strong>严格按提示词</strong>调用酒馆 API 随机生成，不再使用本地模版库。
-                        占位符：<code>{{nickname}}</code> <code>{{age}}</code> <code>{{city}}</code>
-                        <code>{{gender}}</code> <code>{{tag}}</code> <code>{{bio}}</code>
+                        默认<strong>不加固定风格</strong>，只按频道约束（推荐城市 / 同城 / 好友）批量生成。
+                        若填写下方提示词，刷新时会附加进生成请求。
                     </p>
-                    <label class="mm-field-label">提示词
-                        <textarea id="mm-feed-prompt" rows="6" placeholder="${escapeHtml(DEFAULT_FEED_PROMPT)}">${escapeHtml(settings.feedPrompt || '')}</textarea>
+                    <label class="mm-field-label">可选提示词（留空 = 无固定风格）
+                        <textarea id="mm-feed-prompt" rows="6" placeholder="例如：更短、更吐槽、带本地梗……">${escapeHtml(settings.feedPrompt || '')}</textarea>
                     </label>
                     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
                         <button type="button" class="mm-btn" data-action="feed-save">保存动态提示词</button>
-                        <button type="button" class="mm-btn mm-btn-ghost" data-action="feed-reset">恢复默认提示词</button>
+                        <button type="button" class="mm-btn mm-btn-ghost" data-action="feed-reset">清空提示词</button>
                     </div>
                 </div>
 
@@ -353,13 +351,13 @@ export class MeView {
             if (!confirmSettingSave('动态提示词')) return;
             const prompt = String(root.querySelector('#mm-feed-prompt')?.value || '');
             this.app.store.updateSettings({ feedPrompt: prompt });
-            notifySettingSaved(root, '动态提示词已保存：刷新首页将严格按此生成');
+            notifySettingSaved(root, prompt ? '动态提示词已保存' : '已清空：刷新将不加固定风格');
         });
         root.querySelector('[data-action="feed-reset"]')?.addEventListener('click', () => {
-            if (!confirmSettingSave('恢复默认动态提示词')) return;
-            this.app.store.updateSettings({ feedPrompt: DEFAULT_FEED_PROMPT });
+            if (!confirmSettingSave('清空动态提示词')) return;
+            this.app.store.updateSettings({ feedPrompt: '' });
             this.app.render('me');
-            notifySettingSaved(this.app.root?.querySelector('#mm-screen'), '已恢复默认动态提示词');
+            notifySettingSaved(this.app.root?.querySelector('#mm-screen'), '已清空动态提示词');
         });
 
         root.querySelector('[data-action="time-save"]')?.addEventListener('click', () => {
