@@ -27,26 +27,11 @@ function getSettingsBucket() {
     }
 }
 
-/** Optional user feedPrompt from settings; empty = no fixed style. */
+/** Optional user feedPrompt from settings; empty = no extra style. */
 export function getFeedContentSettings(settings = null) {
     const s = settings || getSettingsBucket();
     const prompt = String(s.feedPrompt ?? '').trim().slice(0, 500);
     return { prompt };
-}
-
-export function fillFeedPlaceholders(tpl, user, extra = {}) {
-    const gender = normalizeGender(user?.gender) === 'female' ? '女' : '男';
-    const tag = (user?.tags && user.tags[0]) || '';
-    return String(tpl || '')
-        .replaceAll('{{nickname}}', String(user?.nickname || 'TA'))
-        .replaceAll('{{city}}', String(user?.city || '这座城'))
-        .replaceAll('{{age}}', String(user?.age ?? ''))
-        .replaceAll('{{tag}}', String(tag || '无'))
-        .replaceAll('{{bio}}', String(user?.bio || '无'))
-        .replaceAll('{{gender}}', gender)
-        .replaceAll('{{persona}}', String(user?.persona || user?.homepage?.about || '无'))
-        .replaceAll('{{spice}}', String(extra.spice || ''))
-        .trim();
 }
 
 function sanitizeFeedText(raw) {
@@ -201,7 +186,6 @@ export async function generateRecommendBatch(profile, count = FEED_PAGE_SIZE) {
         `生成${count}名异性（${genderLabel}）`,
         `城市顺序：${slots}`,
         `批次${uid('r').slice(-5)}`,
-        '例：晚风不回消息|24|杭州|徒步|周末有人爬山吗别只回哈哈',
     ].filter(Boolean).join('\n');
 
     let raw = await callFeedModel(systemPrompt, userPrompt, 560);
@@ -282,7 +266,6 @@ export async function generateNearbyBatch(profile, count = FEED_PAGE_SIZE) {
         cfg.prompt,
         `同城「${city}」，${count}名异性（${genderLabel}）`,
         `批次${uid('n').slice(-5)}`,
-        `例：地铁末班车|26|设计师|${city}这雨也太大了 #同城吐槽`,
     ].filter(Boolean).join('\n');
 
     let raw = await callFeedModel(systemPrompt, userPrompt, 520);
@@ -366,7 +349,6 @@ export async function generateFriendsBatch(friends) {
         `为以下${list.length}位好友各写1条：`,
         roster,
         `批次${uid('f').slice(-5)}`,
-        '例：abc123|加班到现在谁还没睡冒个泡',
     ].filter(Boolean).join('\n');
 
     let raw = await callFeedModel(systemPrompt, userPrompt, 420);
@@ -437,7 +419,6 @@ export async function generateMatchBatch(profile, count = FEED_PAGE_SIZE, opts =
         `浏览者${profile?.nickname || '旅人'}，匹配${count}名异性（${genderLabel}）住「${city}」`,
         avoid.length ? `禁用昵称：${avoid.join('、')}` : '',
         `批次${uid('m').slice(-5)}`,
-        '例：晚风不回消息|24|周末徒步吃火锅|徒步/火锅|设计师',
     ].filter(Boolean).join('\n');
 
     let raw = await callFeedModel(systemPrompt, userPrompt, 480);
@@ -492,17 +473,4 @@ export async function generateMatchBatch(profile, count = FEED_PAGE_SIZE, opts =
         });
     }
     return out;
-}
-
-/** @deprecated */
-export async function resolveRecommendCard() {
-    return null;
-}
-
-export async function resolvePostText() {
-    return null;
-}
-
-export async function resolvePostTexts() {
-    return [];
 }

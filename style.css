@@ -116,6 +116,7 @@ body.st-momo-scroll-lock {
 }
 
 .mm-phone {
+    position: relative;
     width: min(390px, 100%);
     height: min(780px, 100%);
     max-width: 100%;
@@ -1190,6 +1191,124 @@ body.st-momo-scroll-lock {
 
 .mm-swipe-row.is-open .mm-swipe-front {
     box-shadow: -4px 0 12px rgba(0, 0, 0, 0.06);
+}
+
+/* Friend long-press action / edit sheets */
+.mm-action-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 80;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .18s ease;
+}
+
+.mm-action-overlay.is-open {
+    pointer-events: auto;
+    opacity: 1;
+}
+
+.mm-action-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.38);
+}
+
+.mm-action-sheet,
+.mm-edit-sheet {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-height: 86%;
+    margin: 0 10px 12px;
+    padding: 10px 0 8px;
+    border-radius: 16px;
+    background: #fff;
+    box-shadow: 0 12px 36px rgba(15, 23, 42, 0.18);
+    transform: translateY(12px);
+    transition: transform .2s ease;
+    overflow: auto;
+}
+
+.mm-action-overlay.is-open .mm-action-sheet,
+.mm-action-overlay.is-open .mm-edit-sheet {
+    transform: translateY(0);
+}
+
+.mm-action-title {
+    padding: 4px 16px 10px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--mm-muted);
+    text-align: center;
+}
+
+.mm-action-sheet > button {
+    display: block;
+    width: 100%;
+    border: 0;
+    border-top: 1px solid var(--mm-line);
+    background: transparent;
+    color: var(--mm-ink);
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.2;
+    padding: 14px 16px;
+    cursor: pointer;
+    text-align: center;
+}
+
+.mm-action-sheet > button.is-danger {
+    color: #e74c3c;
+}
+
+.mm-action-sheet > button.is-cancel {
+    margin-top: 6px;
+    border-top: 0;
+    color: var(--mm-muted);
+    font-weight: 500;
+}
+
+.mm-edit-sheet {
+    padding: 12px 14px 14px;
+}
+
+.mm-edit-form {
+    display: grid;
+    gap: 10px;
+}
+
+.mm-edit-form label {
+    display: grid;
+    gap: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--mm-muted);
+}
+
+.mm-edit-form input,
+.mm-edit-form textarea {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid var(--mm-line);
+    border-radius: 10px;
+    padding: 9px 10px;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--mm-ink);
+    background: #f8fbff;
+    resize: vertical;
+}
+
+.mm-edit-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 4px;
 }
 
 /* Match card swipe stamps */

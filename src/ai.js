@@ -235,7 +235,6 @@ export async function generateNpcReplies(opts) {
             loreBlock,
             '',
             '输出格式：只输出气泡正文，多条用 ||| 分隔。不要 JSON、不要编号、不要引号包裹整段。',
-            '示例：真的假的|||我也想去|||周末有空吗',
         ].filter(Boolean).join('\n');
 
         const prompt = [

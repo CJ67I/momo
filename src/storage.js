@@ -253,16 +253,9 @@ export class MomoStore {
         if (!this.state.chats[user.id]) {
             this.state.chats[user.id] = {
                 peerId: user.id,
-                messages: [
-                    {
-                        id: uid('msg'),
-                        from: 'them',
-                        text: `嗨～我是${user.nickname}，很高兴认识你！`,
-                        createdAt: now,
-                    },
-                ],
+                messages: [],
                 updatedAt: now,
-                unread: 1,
+                unread: 0,
             };
         }
         this.save();
@@ -328,6 +321,22 @@ export class MomoStore {
 
     getMessages(peerId) {
         return this.state.chats[peerId]?.messages || [];
+    }
+
+    /** Clear chat history for a peer; keep the friend. */
+    clearChat(peerId) {
+        const id = String(peerId || '');
+        if (!id) return false;
+        const now = getVirtualNow(this.getSettings());
+        if (!this.state.chats[id]) {
+            this.state.chats[id] = { peerId: id, messages: [], updatedAt: now, unread: 0 };
+        } else {
+            this.state.chats[id].messages = [];
+            this.state.chats[id].updatedAt = now;
+            this.state.chats[id].unread = 0;
+        }
+        this.save();
+        return true;
     }
 
     appendMessage(peerId, message) {

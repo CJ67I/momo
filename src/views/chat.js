@@ -29,6 +29,9 @@ export class ChatView {
         /** Texts arrived while red — start a new yellow cycle after current think. */
         this._queuedAfterRed = [];
         this._swipeDisposes = [];
+        this._lpDisposes = [];
+        /** Skip next open-thread click after long-press menu. */
+        this._suppressClick = false;
     }
 
     /** True while AI is generating (red). Kept for proactive.js / callers. */
@@ -102,7 +105,7 @@ export class ChatView {
             <section class="mm-page mm-chat mm-page-enter">
                 <header class="mm-topbar">
                     <div class="mm-brand">消息</div>
-                    <span class="mm-muted">左滑删除好友</span>
+                    <span class="mm-muted">长按编辑 · 左滑删除</span>
                 </header>
                 <div class="mm-chat-list mm-scroll">${rows}</div>
             </section>
@@ -154,7 +157,7 @@ export class ChatView {
                 <header class="mm-topbar">
                     <button type="button" class="mm-icon-btn" data-action="back-list">‹</button>
                     <button type="button" class="mm-brand mm-name-link" data-action="open-profile" data-id="${escapeHtml(peer.id)}">${escapeHtml(peer.nickname)}</button>
-                    <button type="button" class="mm-link mm-danger" data-action="delete-friend" data-id="${escapeHtml(peer.id)}">删除</button>
+                    <button type="button" class="mm-icon-btn" data-action="friend-menu" data-id="${escapeHtml(peer.id)}" title="更多" aria-label="更多">···</button>
                 </header>
                 <div class="mm-thread" id="mm-thread">${bubbles}${typing}</div>
                 ${this._signalMarkup()}
@@ -265,10 +268,150 @@ export class ChatView {
         }, YELLOW_WAIT_MS);
     }
 
+    _closeOverlay() {
+        document.getElementById('mm-friend-overlay')?.remove();
+    }
+
+    _overlayHost() {
+        return this.app.root?.querySelector('.mm-phone') || this.app.root || document.body;
+    }
+
+    /**
+     * Action sheet: edit persona, clear history, delete friend.
+     * @param {string} peerId
+     */
+    _openFriendActions(peerId) {
+        const id = String(peerId || '');
+        const friend = this.app.store.getFriend(id);
+        if (!friend) return;
+        this._suppressClick = true;
+        this._closeOverlay();
+
+        const host = this._overlayHost();
+        const wrap = document.createElement('div');
+        wrap.id = 'mm-friend-overlay';
+        wrap.className = 'mm-action-overlay';
+        wrap.innerHTML = `
+            <div class="mm-action-backdrop" data-sheet="cancel"></div>
+            <div class="mm-action-sheet" role="dialog" aria-label="好友操作">
+                <div class="mm-action-title">${escapeHtml(friend.nickname)}</div>
+                <button type="button" data-sheet="edit">编辑资料</button>
+                <button type="button" data-sheet="clear">删除聊天记录</button>
+                <button type="button" class="is-danger" data-sheet="delete">删除好友</button>
+                <button type="button" class="is-cancel" data-sheet="cancel">取消</button>
+            </div>
+        `;
+        host.appendChild(wrap);
+        requestAnimationFrame(() => wrap.classList.add('is-open'));
+
+        wrap.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-sheet]');
+            if (!btn) return;
+            const act = btn.getAttribute('data-sheet');
+            if (act === 'cancel') {
+                this._closeOverlay();
+                return;
+            }
+            this._closeOverlay();
+            if (act === 'edit') this._openEditFriend(id);
+            else if (act === 'clear') this._clearChatHistory(id);
+            else if (act === 'delete') this._deleteFriend(id);
+        });
+    }
+
+    /**
+     * Edit friend nickname / bio / persona / speech style / tags.
+     * @param {string} peerId
+     */
+    _openEditFriend(peerId) {
+        const id = String(peerId || '');
+        const friend = this.app.store.getFriend(id);
+        if (!friend) return;
+        this._closeOverlay();
+
+        const tags = Array.isArray(friend.tags) ? friend.tags.join('、') : '';
+        const host = this._overlayHost();
+        const wrap = document.createElement('div');
+        wrap.id = 'mm-friend-overlay';
+        wrap.className = 'mm-action-overlay';
+        wrap.innerHTML = `
+            <div class="mm-action-backdrop" data-edit="cancel"></div>
+            <div class="mm-edit-sheet" role="dialog" aria-label="编辑好友资料">
+                <div class="mm-action-title">编辑 · ${escapeHtml(friend.nickname)}</div>
+                <form id="mm-edit-friend-form" class="mm-edit-form">
+                    <label>昵称<input name="nickname" maxlength="16" required value="${escapeHtml(friend.nickname || '')}" /></label>
+                    <label>简介<input name="bio" maxlength="40" value="${escapeHtml(friend.bio || '')}" /></label>
+                    <label>标签（顿号分隔）<input name="tags" maxlength="60" value="${escapeHtml(tags)}" placeholder="徒步、咖啡" /></label>
+                    <label>人设<textarea name="persona" rows="3" maxlength="300" placeholder="性格、经历、说话立场…">${escapeHtml(friend.persona || '')}</textarea></label>
+                    <label>说话风格<textarea name="speechStyle" rows="2" maxlength="160" placeholder="口癖、语气、常用词…">${escapeHtml(friend.speechStyle || '')}</textarea></label>
+                    <div class="mm-edit-actions">
+                        <button type="button" class="mm-btn mm-btn-ghost" data-edit="cancel">取消</button>
+                        <button type="submit" class="mm-btn">保存</button>
+                    </div>
+                </form>
+            </div>
+        `;
+        host.appendChild(wrap);
+        requestAnimationFrame(() => wrap.classList.add('is-open'));
+
+        wrap.addEventListener('click', (e) => {
+            if (e.target.closest('[data-edit="cancel"]')) this._closeOverlay();
+        });
+
+        wrap.querySelector('#mm-edit-friend-form')?.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const fd = new FormData(e.target);
+            const nickname = String(fd.get('nickname') || '').trim().slice(0, 16);
+            if (!nickname) {
+                toast('昵称不能为空', 'warning');
+                return;
+            }
+            const bio = String(fd.get('bio') || '').trim().slice(0, 40);
+            const persona = String(fd.get('persona') || '').trim().slice(0, 300);
+            const speechStyle = String(fd.get('speechStyle') || '').trim().slice(0, 160);
+            const tagList = String(fd.get('tags') || '')
+                .split(/[/|,，、\s]+/)
+                .map((t) => t.trim())
+                .filter(Boolean)
+                .slice(0, 6);
+
+            this.app.store.updateUser({
+                id,
+                nickname,
+                bio,
+                persona,
+                speechStyle,
+                tags: tagList,
+                avatarText: nickname.replace(/[^\u4e00-\u9fa5A-Za-z0-9]/g, '').slice(0, 1) || friend.avatarText || '·',
+                personaReady: true,
+            });
+            this._closeOverlay();
+            toast('好友资料已更新', 'success');
+            this.app.render('chat');
+        });
+    }
+
+    _clearChatHistory(id) {
+        const friend = this.app.store.getFriend(id);
+        const name = friend?.nickname || '该好友';
+        if (!confirm(`清空与「${name}」的聊天记录？\n好友关系会保留。`)) return;
+        if (this._signalPeerId === id) {
+            this._clearYellowTimer();
+            this._batch = [];
+            this._queuedAfterRed = [];
+            this.light = 'green';
+            this._signalPeerId = null;
+        }
+        this.app.store.clearChat(id);
+        toast('聊天记录已删除', 'warning');
+        this.app.render('chat');
+    }
+
     _deleteFriend(id) {
         const friend = this.app.store.getFriend(id);
         const name = friend?.nickname || '该好友';
         if (!confirm(`删除好友「${name}」？\n聊天记录也会一并清除。`)) return;
+        this._closeOverlay();
         this._clearYellowTimer();
         this._batch = [];
         this._queuedAfterRed = [];
@@ -277,6 +420,85 @@ export class ChatView {
         if (this.activePeerId === id) this.activePeerId = null;
         toast(`已删除 ${name}`, 'warning');
         this.app.render('chat');
+    }
+
+    /**
+     * Long-press a chat row to open friend actions (touch + mouse).
+     * @param {HTMLElement} row
+     */
+    _bindLongPress(row) {
+        const peerId = row.getAttribute('data-peer-id');
+        const front = row.querySelector('.mm-swipe-front');
+        if (!peerId || !front) return () => {};
+
+        let timer = null;
+        let startX = 0;
+        let startY = 0;
+        let fired = false;
+
+        const clear = () => {
+            if (timer) {
+                clearTimeout(timer);
+                timer = null;
+            }
+        };
+
+        const onDown = (e) => {
+            if (e.button != null && e.button !== 0) return;
+            const t = e.touches?.[0] || e;
+            startX = t.clientX;
+            startY = t.clientY;
+            fired = false;
+            clear();
+            timer = setTimeout(() => {
+                timer = null;
+                fired = true;
+                this._openFriendActions(peerId);
+            }, 520);
+        };
+
+        const onMove = (e) => {
+            if (!timer) return;
+            const t = e.touches?.[0] || e;
+            if (Math.hypot(t.clientX - startX, t.clientY - startY) > 12) clear();
+        };
+
+        const onUp = (e) => {
+            clear();
+            if (fired) {
+                e.preventDefault?.();
+                e.stopPropagation?.();
+                setTimeout(() => {
+                    this._suppressClick = false;
+                }, 280);
+            }
+        };
+
+        front.addEventListener('touchstart', onDown, { passive: true });
+        front.addEventListener('touchmove', onMove, { passive: true });
+        front.addEventListener('touchend', onUp);
+        front.addEventListener('touchcancel', onUp);
+        front.addEventListener('mousedown', onDown);
+        front.addEventListener('mousemove', onMove);
+        front.addEventListener('mouseup', onUp);
+        front.addEventListener('mouseleave', clear);
+        front.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            clear();
+            this._openFriendActions(peerId);
+        });
+
+        return () => {
+            clear();
+            front.removeEventListener('touchstart', onDown);
+            front.removeEventListener('touchmove', onMove);
+            front.removeEventListener('touchend', onUp);
+            front.removeEventListener('touchcancel', onUp);
+            front.removeEventListener('mousedown', onDown);
+            front.removeEventListener('mousemove', onMove);
+            front.removeEventListener('mouseup', onUp);
+            front.removeEventListener('mouseleave', clear);
+        };
     }
 
     _bindRowSwipe(row) {
@@ -336,19 +558,37 @@ export class ChatView {
     }
 
     bind(root) {
+        this._closeOverlay();
         this._swipeDisposes.forEach((d) => d?.());
         this._swipeDisposes = [];
+        this._lpDisposes.forEach((d) => d?.());
+        this._lpDisposes = [];
 
         root.querySelectorAll('.mm-swipe-row').forEach((row) => {
             this._swipeDisposes.push(this._bindRowSwipe(row));
+            this._lpDisposes.push(this._bindLongPress(row));
         });
 
         root.querySelectorAll('[data-action="open-thread"]').forEach((btn) => {
-            btn.addEventListener('click', () => this.open(btn.getAttribute('data-id')));
+            btn.addEventListener('click', (e) => {
+                if (this._suppressClick) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    this._suppressClick = false;
+                    return;
+                }
+                this.open(btn.getAttribute('data-id'));
+            });
         });
 
         root.querySelectorAll('[data-action="open-profile"]').forEach((btn) => {
             btn.addEventListener('click', (e) => {
+                if (this._suppressClick) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    this._suppressClick = false;
+                    return;
+                }
                 e.stopPropagation();
                 const id = btn.getAttribute('data-id');
                 if (id) this.app.openProfile(id, 'chat');
@@ -361,6 +601,13 @@ export class ChatView {
                 e.stopPropagation();
                 this._deleteFriend(btn.getAttribute('data-id'));
             });
+        });
+
+        root.querySelector('[data-action="friend-menu"]')?.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const id = e.currentTarget.getAttribute('data-id');
+            if (id) this._openFriendActions(id);
         });
 
         root.querySelector('[data-action="back-list"]')?.addEventListener('click', () => this.closeThread());

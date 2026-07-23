@@ -118,7 +118,6 @@ export class MeView {
                         <li>主聊天：${this.bridgeInfo.chatCount} 条可读</li>
                         <li>世界书发现：${books.length} 本 · 已选 ${(wb.selected || []).length} 本</li>
                         <li>注入状态：${escapeHtml(this.bridgeInfo.worldSource || 'none')}</li>
-                        <li>generateRaw：${api.hasGenerateRaw ? '可用' : '不可用'}</li>
                     </ul>
                     <button type="button" class="mm-btn mm-btn-ghost mm-btn-block" data-action="sync-persona">从 Persona 同步昵称</button>
                     <button type="button" class="mm-btn mm-btn-block" data-action="import-character">导入当前角色卡为好友</button>
@@ -211,7 +210,7 @@ export class MeView {
                         <input type="checkbox" id="mm-auto-reply" ${settings.autoReply ? 'checked' : ''} />
                     </label>
                     <label class="mm-switch">
-                        <span>优先使用酒馆 API 回复</span>
+                        <span>启用 AI 私聊回复</span>
                         <input type="checkbox" id="mm-ai-reply" ${settings.useAiReply ? 'checked' : ''} />
                     </label>
                     <label class="mm-switch">
@@ -233,7 +232,7 @@ export class MeView {
                             <span><strong>硬注入</strong> — 软互通 + 匹配/加好友时写一条剧情同步气泡</span>
                         </label>
                         <p class="mm-muted" style="margin:4px 0 8px;font-size:11px;line-height:1.45">
-                            主聊天若曾出现空回复：先选「关闭」保存，刷新扩展后再试。刷动态永不写入主聊天。
+                            刷动态永不写入主聊天。硬注入仅在匹配/加好友时写一条系统同步。
                         </p>
                         <button type="button" class="mm-btn mm-btn-block" data-action="interop-save">保存互通模式</button>
                     </div>
@@ -330,7 +329,7 @@ export class MeView {
             saveToggle('autoReply', e.target.checked, '好友自动回复');
         });
         root.querySelector('#mm-ai-reply')?.addEventListener('change', (e) => {
-            saveToggle('useAiReply', e.target.checked, '优先使用酒馆 API 回复');
+            saveToggle('useAiReply', e.target.checked, '启用 AI 私聊回复');
         });
         root.querySelector('#mm-ai-names')?.addEventListener('change', (e) => {
             saveToggle('useAiNames', e.target.checked, 'AI 生成现代网名');

@@ -57,7 +57,7 @@ export class HomeView {
 
         try {
             if (!canUseTavernApi()) {
-                toast('酒馆 API 未在线，无法生成动态（纯 AI，无本地文案库）', 'warning');
+                toast('酒馆 API 未在线，无法生成动态', 'warning');
                 return;
             }
 
