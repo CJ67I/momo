@@ -213,10 +213,13 @@ export class MeView {
                     </label>
                     <label class="mm-field-label">Thinking（提示词优化）
                         <select id="mm-seedream-thinking">
-                            <option value="enabled" ${(settings.seedreamThinking || 'enabled') === 'enabled' ? 'selected' : ''}>enabled</option>
-                            <option value="disabled" ${settings.seedreamThinking === 'disabled' ? 'selected' : ''}>disabled（更快）</option>
+                            <option value="disabled" ${(settings.seedreamThinking || 'disabled') === 'disabled' ? 'selected' : ''}>disabled（推荐：更跟参考图）</option>
+                            <option value="enabled" ${settings.seedreamThinking === 'enabled' ? 'selected' : ''}>enabled</option>
                         </select>
                     </label>
+                    <p class="mm-muted" style="margin:4px 0 8px;font-size:11px;line-height:1.45">
+                        若出图不像参考人，请确认好友已保存参考图，并把 Thinking 设为 disabled 后重试。
+                    </p>
                     <button type="button" class="mm-btn mm-btn-block" data-action="seedream-save">保存 Seedream 设定</button>
                 </div>
 
@@ -440,9 +443,9 @@ export class MeView {
                 || 'bytedance/seedream-v5.0-pro/edit';
             const seedreamSize = String(root.querySelector('#mm-seedream-size')?.value || '1024*1024');
             const seedreamOutputFormat = root.querySelector('#mm-seedream-format')?.value === 'png' ? 'png' : 'jpeg';
-            const seedreamThinking = root.querySelector('#mm-seedream-thinking')?.value === 'disabled'
-                ? 'disabled'
-                : 'enabled';
+            const seedreamThinking = root.querySelector('#mm-seedream-thinking')?.value === 'enabled'
+                ? 'enabled'
+                : 'disabled';
             this.app.store.updateSettings({
                 seedreamEnabled,
                 seedreamAutoFromAi,
@@ -456,7 +459,9 @@ export class MeView {
             notifySettingSaved(
                 root,
                 seedreamEnabled
-                    ? (seedreamApiKey ? 'Seedream 已启用并保存' : '已启用，但尚未填写 API Key')
+                    ? (seedreamApiKey
+                        ? `Seedream 已保存（Thinking: ${seedreamThinking}）`
+                        : '已启用，但尚未填写 API Key')
                     : '已关闭 Seedream 生图',
             );
         });

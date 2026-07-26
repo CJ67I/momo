@@ -421,8 +421,15 @@ export class ChatView {
         const hasPersona = Boolean(String(friend.persona || '').trim() && String(friend.speechStyle || '').trim());
         const tags = Array.isArray(friend.tags) ? friend.tags.join('、') : '';
         const refUrl = String(friend.seedreamRefUrl || friend.referenceImage || '').trim();
-        const refEnabled = refUrl && friend.seedreamRefEnabled !== false && friend.seedreamRefEnabled !== 'false';
+        const refDataUrl = String(friend.seedreamRefDataUrl || '').trim();
+        const previewUrl = /^data:image\//i.test(refDataUrl) ? refDataUrl : refUrl;
+        const refEnabled = Boolean(refUrl || refDataUrl)
+            && friend.seedreamRefEnabled !== false
+            && friend.seedreamRefEnabled !== 'false';
         const promptTags = String(friend.seedreamPromptTags || friend.imageTags || '').trim();
+        /** Keep large data URIs out of HTML attributes (truncation risk). */
+        let pendingRefUrl = refUrl;
+        let pendingRefDataUrl = refDataUrl;
         const host = this._overlayHost();
         const wrap = document.createElement('div');
         wrap.id = 'mm-friend-overlay';
@@ -440,24 +447,23 @@ export class ChatView {
                             <span>个人形象参考图（Seedream）</span>
                         </div>
                         <p class="mm-muted" style="margin:0;font-size:11px;line-height:1.45">
-                            上传后，AI 回复 <b>[个人图片]（描述）</b> 或点聊天「图」时，会基于这张图调用 Seedream 编辑生图。
+                            上传后会按 <b>编辑图1 / 保持同一人</b> 调用 Seedream。AI 回复 <b>[个人图片]（描述）</b> 或点聊天「图」触发生图。
                         </p>
                         <div class="mm-ref-row">
-                            <div class="mm-ref-preview" id="mm-ref-preview" style="${refUrl ? `background-image:url('${escapeHtml(refUrl)}')` : ''}">${refUrl ? '' : '无'}</div>
+                            <div class="mm-ref-preview" id="mm-ref-preview">${previewUrl ? '' : '无'}</div>
                             <div class="mm-ref-actions">
                                 <input type="file" id="mm-ref-file" accept="image/png,image/jpeg,image/webp,image/gif,image/*" hidden />
-                                <button type="button" class="mm-btn mm-btn-ghost" id="mm-ref-upload">${refUrl ? '替换参考图' : '上传参考图'}</button>
-                                <button type="button" class="mm-btn mm-btn-ghost" id="mm-ref-clear" ${refUrl ? '' : 'disabled'}>清除</button>
+                                <button type="button" class="mm-btn mm-btn-ghost" id="mm-ref-upload">${previewUrl ? '替换参考图' : '上传参考图'}</button>
+                                <button type="button" class="mm-btn mm-btn-ghost" id="mm-ref-clear" ${previewUrl ? '' : 'disabled'}>清除</button>
                                 <label class="mm-switch" style="margin-top:6px">
                                     <span>启用参考图</span>
-                                    <input type="checkbox" name="seedreamRefEnabled" ${refEnabled ? 'checked' : ''} ${refUrl ? '' : 'disabled'} />
+                                    <input type="checkbox" name="seedreamRefEnabled" ${refEnabled ? 'checked' : ''} ${previewUrl ? '' : 'disabled'} />
                                 </label>
                             </div>
                         </div>
-                        <label>外貌提示词（可选，拼到生图 prompt 前）
-                            <input name="seedreamPromptTags" maxlength="200" value="${escapeHtml(promptTags)}" placeholder="1girl, long black hair, …" />
+                        <label>外貌提示词（可选）
+                            <input name="seedreamPromptTags" maxlength="200" value="${escapeHtml(promptTags)}" placeholder="黑长直、双眼皮…" />
                         </label>
-                        <input type="hidden" name="seedreamRefUrl" value="${escapeHtml(refUrl)}" />
                     </div>
                     <div class="mm-edit-persona-head">
                         <span>人设 / 说话风格</span>
@@ -483,31 +489,39 @@ export class ChatView {
         const tagsEl = form?.querySelector('[name="tags"]');
         const statusEl = wrap.querySelector('#mm-persona-status');
         const regenBtn = wrap.querySelector('#mm-persona-regen');
-        const refUrlEl = form?.querySelector('[name="seedreamRefUrl"]');
         const refEnabledEl = form?.querySelector('[name="seedreamRefEnabled"]');
         const refPreview = wrap.querySelector('#mm-ref-preview');
         const refFile = wrap.querySelector('#mm-ref-file');
         const refUploadBtn = wrap.querySelector('#mm-ref-upload');
         const refClearBtn = wrap.querySelector('#mm-ref-clear');
 
-        const paintRefPreview = (url) => {
-            const u = String(url || '').trim();
+        const paintRefPreview = (url, dataUrl = '') => {
+            const preview = String(dataUrl || url || '').trim();
+            pendingRefUrl = String(url || '').trim();
+            pendingRefDataUrl = String(dataUrl || '').trim();
             if (refPreview) {
-                refPreview.style.backgroundImage = u ? `url("${u}")` : '';
-                refPreview.textContent = u ? '' : '无';
+                if (preview) {
+                    refPreview.style.backgroundImage = `url("${preview.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}")`;
+                    refPreview.textContent = '';
+                } else {
+                    refPreview.style.backgroundImage = '';
+                    refPreview.textContent = '无';
+                }
             }
-            if (refClearBtn) refClearBtn.disabled = !u;
+            if (refClearBtn) refClearBtn.disabled = !preview;
             if (refEnabledEl) {
-                refEnabledEl.disabled = !u;
-                if (!u) refEnabledEl.checked = false;
+                refEnabledEl.disabled = !preview;
+                if (!preview) refEnabledEl.checked = false;
                 else if (!refEnabledEl.checked) refEnabledEl.checked = true;
             }
-            if (refUploadBtn) refUploadBtn.textContent = u ? '替换参考图' : '上传参考图';
-            if (refUrlEl) refUrlEl.value = u;
+            if (refUploadBtn) refUploadBtn.textContent = preview ? '替换参考图' : '上传参考图';
         };
 
+        // Initial paint via JS (avoid stuffing huge data URI into HTML attributes)
+        paintRefPreview(pendingRefUrl, pendingRefDataUrl);
+
         refUploadBtn?.addEventListener('click', () => refFile?.click());
-        refClearBtn?.addEventListener('click', () => paintRefPreview(''));
+        refClearBtn?.addEventListener('click', () => paintRefPreview('', ''));
         refFile?.addEventListener('change', async () => {
             const file = refFile.files?.[0];
             refFile.value = '';
@@ -515,7 +529,7 @@ export class ChatView {
             try {
                 toast('正在处理参考图…', 'info');
                 const prepared = await prepareReferenceImage(file, this.app.store.getSettings());
-                paintRefPreview(prepared.url);
+                paintRefPreview(prepared.url, prepared.dataUrl || '');
                 if (prepared.storedAs === 'data' && prepared.uploadError) {
                     toast('已用本地图（云端上传失败，仍可生图）', 'warning');
                 } else {
@@ -588,9 +602,11 @@ export class ChatView {
                 .map((t) => t.trim())
                 .filter(Boolean)
                 .slice(0, 6);
-            const seedreamRefUrl = String(fd.get('seedreamRefUrl') || '').trim();
+            const seedreamRefUrl = String(pendingRefUrl || '').trim();
+            const seedreamRefDataUrl = String(pendingRefDataUrl || '').trim();
             const seedreamPromptTags = String(fd.get('seedreamPromptTags') || '').trim().slice(0, 200);
-            const seedreamRefEnabled = Boolean(seedreamRefUrl) && Boolean(form.querySelector('[name="seedreamRefEnabled"]')?.checked);
+            const hasRef = Boolean(seedreamRefUrl || seedreamRefDataUrl);
+            const seedreamRefEnabled = hasRef && Boolean(form.querySelector('[name="seedreamRefEnabled"]')?.checked);
 
             this.app.store.updateUser({
                 id,
@@ -602,6 +618,7 @@ export class ChatView {
                 avatarText: nickname.replace(/[^\u4e00-\u9fa5A-Za-z0-9]/g, '').slice(0, 1) || friend.avatarText || '·',
                 personaReady: true,
                 seedreamRefUrl,
+                seedreamRefDataUrl,
                 seedreamRefEnabled,
                 seedreamPromptTags,
             });

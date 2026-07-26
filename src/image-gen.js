@@ -74,6 +74,7 @@ export async function compressImageToDataUrl(file, opts = {}) {
 
 /**
  * Prepare a reference image for Seedream: compress → prefer uploadMedia URL → else data URI.
+ * Always keep a local data URI copy so generate can embed bytes even if remote URL dies.
  * @param {File|Blob} file
  * @param {object} settings
  */
@@ -81,7 +82,7 @@ export async function prepareReferenceImage(file, settings = {}) {
     const dataUrl = await compressImageToDataUrl(file);
     const cfg = getSeedreamConfig(settings);
     if (!cfg.apiKey) {
-        return { url: dataUrl, storedAs: 'data' };
+        return { url: dataUrl, dataUrl, storedAs: 'data' };
     }
     try {
         const blob = await (await fetch(dataUrl)).blob();
@@ -90,10 +91,10 @@ export async function prepareReferenceImage(file, settings = {}) {
             baseUrl: cfg.baseUrl,
             filename: `momo_ref_${Date.now()}.jpg`,
         });
-        return { url, storedAs: 'remote' };
+        return { url, dataUrl, storedAs: 'remote' };
     } catch (e) {
         console.warn('[st-momo] uploadMedia failed, fallback data URI', e);
-        return { url: dataUrl, storedAs: 'data', uploadError: e?.message || String(e) };
+        return { url: dataUrl, dataUrl, storedAs: 'data', uploadError: e?.message || String(e) };
     }
 }
 
@@ -104,21 +105,65 @@ export async function prepareReferenceImage(file, settings = {}) {
 export function getPeerReferenceImage(peer) {
     if (!peer) return '';
     if (peer.seedreamRefEnabled === false || peer.seedreamRefEnabled === 'false') return '';
-    return String(peer.seedreamRefUrl || peer.referenceImage || '').trim();
+    return String(
+        peer.seedreamRefDataUrl
+        || peer.seedreamRefUrl
+        || peer.referenceImage
+        || '',
+    ).trim();
 }
 
 /**
- * Build final prompt: optional peer tags + scene description.
+ * Turn a stored ref (http URL or data URI) into an API-ready image string.
+ * Prefers data URI so Atlas receives the actual pixels (avoids dead/wrong remote URLs).
+ * @param {string} ref
+ * @param {{ signal?: AbortSignal }} [opts]
+ */
+export async function resolveReferenceForApi(ref, opts = {}) {
+    const raw = String(ref || '').trim();
+    if (!raw) throw new Error('参考图为空');
+    if (/^data:image\//i.test(raw)) return raw;
+
+    if (/^https?:\/\//i.test(raw)) {
+        try {
+            const res = await fetch(raw, { signal: opts.signal, mode: 'cors' });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const blob = await res.blob();
+            if (!String(blob.type || '').startsWith('image/')) {
+                // still try; some CDNs omit type
+            }
+            return await compressImageToDataUrl(blob);
+        } catch (e) {
+            console.warn('[st-momo] fetch ref as data URI failed, pass URL through', e);
+            return raw;
+        }
+    }
+
+    throw new Error('参考图格式无效（需要 http(s) URL 或 data:image）');
+}
+
+/**
+ * Seedream Edit needs instruction-style prompts that refer to image 1.
+ * Plain "casual selfie" prompts tend to ignore the reference and invent a new person.
+ * @param {object} peer
+ * @param {string} scenePrompt
  */
 export function buildPersonalImagePrompt(peer, scenePrompt) {
-    const scene = String(scenePrompt || '').trim();
+    const scene = String(scenePrompt || '').trim() || 'a natural casual photo';
     const tags = String(peer?.seedreamPromptTags || peer?.imageTags || '')
         .split(/[,，\n]+/)
         .map((t) => t.trim())
         .filter(Boolean)
         .join(', ');
-    if (tags && scene) return `${tags}, ${scene}`.slice(0, 600);
-    return (tags || scene).slice(0, 600);
+    const look = tags ? ` Appearance hints: ${tags}.` : '';
+    return [
+        'Edit image 1.',
+        'Keep the exact same person from image 1: same face, facial features, hair, skin tone, body proportions and identity.',
+        'Do not invent a different person or swap identity.',
+        `Change only the scene / pose / clothing / framing as requested: ${scene}.`,
+        look,
+        'Photorealistic result, natural lighting, preserve identity above all else.',
+    ].join(' ').replace(/\s+/g, ' ').trim().slice(0, 900);
 }
 
 /**
@@ -130,13 +175,27 @@ export async function generatePersonalImage(opts) {
     if (!isSeedreamConfigured(settings)) {
         throw Object.assign(new Error('请先在「我」页启用 Seedream 并填写 API Key'), { code: 'seedream_off' });
     }
-    const ref = getPeerReferenceImage(peer);
-    if (!ref) {
+    const refStored = getPeerReferenceImage(peer);
+    if (!refStored) {
         throw Object.assign(new Error('请先在好友「编辑资料」上传个人形象参考图'), { code: 'no_ref' });
     }
     const cfg = getSeedreamConfig(settings);
     const finalPrompt = buildPersonalImagePrompt(peer, prompt);
     if (!finalPrompt) throw new Error('缺少生图描述');
+
+    const refForApi = await resolveReferenceForApi(refStored, { signal });
+    if (!refForApi) throw new Error('参考图无法加载');
+
+    try {
+        console.info('[st-momo] Seedream edit', {
+            model: cfg.model,
+            promptPreview: finalPrompt.slice(0, 160),
+            refKind: /^data:image\//i.test(refForApi) ? 'data-uri' : 'url',
+            refChars: refForApi.length,
+        });
+    } catch {
+        // ignore
+    }
 
     return generateSeedreamImage({
         apiKey: cfg.apiKey,
@@ -149,7 +208,7 @@ export async function generatePersonalImage(opts) {
         pollTimeoutMs: cfg.pollTimeoutMs,
         enableBase64Output: false,
         prompt: finalPrompt,
-        images: [ref],
+        images: [refForApi],
         signal,
     });
 }

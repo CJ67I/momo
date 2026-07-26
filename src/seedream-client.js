@@ -87,15 +87,24 @@ export async function uploadSeedreamMedia(blob, opts = {}) {
     }
 
     const data = json?.data ?? json;
-    const url = String(
-        data?.url
-        || data?.media_url
-        || data?.mediaUrl
-        || data?.outputs?.[0]
-        || (Array.isArray(data) ? data[0] : '')
-        || '',
-    ).trim();
-    if (!url) throw new Error('uploadMedia 成功但未返回 URL');
+    const candidates = [
+        data?.url,
+        data?.media_url,
+        data?.mediaUrl,
+        data?.file_url,
+        data?.fileUrl,
+        data?.path,
+        data?.outputs?.[0],
+        data?.files?.[0]?.url,
+        data?.file?.url,
+        Array.isArray(data) ? data[0]?.url || data[0] : '',
+        typeof data === 'string' ? data : '',
+    ];
+    const url = candidates.map((x) => String(x || '').trim()).find((x) => /^https?:\/\//i.test(x) || /^data:image\//i.test(x)) || '';
+    if (!url) {
+        console.warn('[st-momo] uploadMedia unexpected payload', json);
+        throw new Error('uploadMedia 成功但未返回可用 URL');
+    }
     return url;
 }
 

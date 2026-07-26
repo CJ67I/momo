@@ -222,7 +222,7 @@ export async function generateNpcReplies(opts) {
         const canSendSelfie = Boolean(
             allowPersonalImage
             && peer?.seedreamRefEnabled !== false
-            && String(peer?.seedreamRefUrl || peer?.referenceImage || '').trim(),
+            && String(peer?.seedreamRefDataUrl || peer?.seedreamRefUrl || peer?.referenceImage || '').trim(),
         );
 
         const identityLock = [

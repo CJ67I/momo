@@ -49,7 +49,7 @@ function emptyState() {
             seedreamModel: 'bytedance/seedream-v5.0-pro/edit',
             seedreamSize: '1024*1024',
             seedreamOutputFormat: 'jpeg',
-            seedreamThinking: 'enabled',
+            seedreamThinking: 'disabled',
             seedreamAutoFromAi: true,
         },
     };
@@ -162,8 +162,8 @@ export class MomoStore {
         if (this.state.settings.seedreamOutputFormat !== 'png') {
             this.state.settings.seedreamOutputFormat = 'jpeg';
         }
-        if (this.state.settings.seedreamThinking !== 'disabled') {
-            this.state.settings.seedreamThinking = 'enabled';
+        if (!['enabled', 'disabled'].includes(String(this.state.settings.seedreamThinking || ''))) {
+            this.state.settings.seedreamThinking = 'disabled';
         }
         if (typeof this.state.settings.seedreamAutoFromAi !== 'boolean') {
             this.state.settings.seedreamAutoFromAi = true;
