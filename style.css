@@ -869,6 +869,10 @@ body.st-momo-scroll-lock {
     cursor: not-allowed;
 }
 
+.mm-gen-image-btn.is-me-img {
+    color: var(--mm-blue, #4a9eff);
+}
+
 .mm-ref-block {
     display: grid;
     gap: 8px;

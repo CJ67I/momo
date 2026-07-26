@@ -13,19 +13,60 @@ import { uid } from './utils.js';
 /** @type {Set<string>} */
 const _locks = new Set();
 
+const IMAGE_TAG_CORE = '(?:个人)?(?:图片|照片|自拍|形象图|美照)';
+
 /**
- * Match `[个人图片]（描述）` / `[个人图片](描述)` / `[个人图片] 描述`
+ * True if bubble looks like an image placeholder / send-photo intent tag.
+ * Covers `[个人图片]` / `【图片】` / `[图片]……` etc.
+ * @param {string} text
+ */
+export function isImageIntentBubble(text) {
+    const raw = String(text || '').trim();
+    if (!raw) return false;
+    if (new RegExp(`^[\\[【]\\s*${IMAGE_TAG_CORE}\\s*[\\]】]`, 'i').test(raw)) return true;
+    if (new RegExp(`^(?:发一张|发个|给你看|这是我的)?\\s*[\\[【]\\s*${IMAGE_TAG_CORE}\\s*[\\]】]`, 'i').test(raw)) return true;
+    // Models often write: 【图片】...... / [图片]…… / 【照片】xxx
+    if (new RegExp(`[\\[【]\\s*${IMAGE_TAG_CORE}\\s*[\\]】]\\s*[.。…·\\-—]*`, 'i').test(raw)
+        && raw.length <= 80) {
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Parse NPC/user image tags into a scene prompt.
+ * Accepts `[个人图片]（描述）` / `【图片】……` / `[照片]: xxx` etc.
  * @param {string} text
  * @returns {{ prompt: string, raw: string }|null}
  */
 export function parsePersonalImageTag(text) {
     const raw = String(text || '').trim();
-    if (!raw) return null;
-    const m = raw.match(/^\[\s*个人图片\s*\]\s*(?:[（(]\s*([\s\S]+?)\s*[）)]|[:：]\s*([\s\S]+)|([\s\S]+))\s*$/);
-    if (!m) return null;
-    const prompt = String(m[1] || m[2] || m[3] || '').trim();
-    if (!prompt) return null;
+    if (!raw || !isImageIntentBubble(raw)) return null;
+
+    const m = raw.match(new RegExp(
+        `^[\\[【]\\s*${IMAGE_TAG_CORE}\\s*[\\]】]\\s*(?:[（(]\\s*([\\s\\S]+?)\\s*[）)]|[:：]\\s*([\\s\\S]+)|[-—]\\s*([\\s\\S]+)|([\\s\\S]*))\\s*$`,
+        'i',
+    ));
+    let prompt = '';
+    if (m) {
+        prompt = String(m[1] || m[2] || m[3] || m[4] || '').trim();
+    } else {
+        // strip leading tag then take remainder
+        prompt = raw
+            .replace(new RegExp(`^[\\[【]\\s*${IMAGE_TAG_CORE}\\s*[\\]】]\\s*`, 'i'), '')
+            .trim();
+    }
+    // Dots / ellipsis placeholders → default scene
+    if (!prompt || /^[.。…·\-\s]+$/.test(prompt)) {
+        prompt = 'casual selfie, natural lighting, looking at camera';
+    }
     return { prompt: prompt.slice(0, 600), raw };
+}
+
+/** User text asks the peer to send a photo. */
+export function userAskedForPhoto(text) {
+    const t = String(text || '');
+    return /照片|自拍|发张图|发个图|发图片|看看你|看看样子|长什么样|露个脸|看看你现在|发张自拍|看看你今天/.test(t);
 }
 
 /**
@@ -99,18 +140,23 @@ export async function prepareReferenceImage(file, settings = {}) {
 }
 
 /**
- * Resolve peer reference image for Seedream `images` array.
- * @param {object} peer
+ * Resolve subject (friend or profile) reference image for Seedream `images`.
+ * @param {object} subject
  */
-export function getPeerReferenceImage(peer) {
-    if (!peer) return '';
-    if (peer.seedreamRefEnabled === false || peer.seedreamRefEnabled === 'false') return '';
+export function getPeerReferenceImage(subject) {
+    if (!subject) return '';
+    if (subject.seedreamRefEnabled === false || subject.seedreamRefEnabled === 'false') return '';
     return String(
-        peer.seedreamRefDataUrl
-        || peer.seedreamRefUrl
-        || peer.referenceImage
+        subject.seedreamRefDataUrl
+        || subject.seedreamRefUrl
+        || subject.referenceImage
         || '',
     ).trim();
+}
+
+/** @param {object} profile */
+export function getUserReferenceImage(profile) {
+    return getPeerReferenceImage(profile);
 }
 
 /**
@@ -144,13 +190,12 @@ export async function resolveReferenceForApi(ref, opts = {}) {
 
 /**
  * Seedream Edit needs instruction-style prompts that refer to image 1.
- * Plain "casual selfie" prompts tend to ignore the reference and invent a new person.
- * @param {object} peer
+ * @param {object} subject friend or profile
  * @param {string} scenePrompt
  */
-export function buildPersonalImagePrompt(peer, scenePrompt) {
+export function buildPersonalImagePrompt(subject, scenePrompt) {
     const scene = String(scenePrompt || '').trim() || 'a natural casual photo';
-    const tags = String(peer?.seedreamPromptTags || peer?.imageTags || '')
+    const tags = String(subject?.seedreamPromptTags || subject?.imageTags || '')
         .split(/[,，\n]+/)
         .map((t) => t.trim())
         .filter(Boolean)
@@ -167,20 +212,31 @@ export function buildPersonalImagePrompt(peer, scenePrompt) {
 }
 
 /**
- * Call Seedream edit for a friend with reference image.
- * @param {{ peer: object, prompt: string, settings: object, signal?: AbortSignal }} opts
+ * Call Seedream edit with a subject reference (friend or self profile).
+ * @param {{
+ *   subject?: object,
+ *   peer?: object,
+ *   prompt: string,
+ *   settings: object,
+ *   signal?: AbortSignal,
+ *   noRefHint?: string,
+ * }} opts
  */
 export async function generatePersonalImage(opts) {
-    const { peer, prompt, settings, signal } = opts || {};
+    const { prompt, settings, signal } = opts || {};
+    const subject = opts.subject || opts.peer;
     if (!isSeedreamConfigured(settings)) {
         throw Object.assign(new Error('请先在「我」页启用 Seedream 并填写 API Key'), { code: 'seedream_off' });
     }
-    const refStored = getPeerReferenceImage(peer);
+    const refStored = getPeerReferenceImage(subject);
     if (!refStored) {
-        throw Object.assign(new Error('请先在好友「编辑资料」上传个人形象参考图'), { code: 'no_ref' });
+        throw Object.assign(
+            new Error(opts.noRefHint || '请先上传个人形象参考图'),
+            { code: 'no_ref' },
+        );
     }
     const cfg = getSeedreamConfig(settings);
-    const finalPrompt = buildPersonalImagePrompt(peer, prompt);
+    const finalPrompt = buildPersonalImagePrompt(subject, prompt);
     if (!finalPrompt) throw new Error('缺少生图描述');
 
     const refForApi = await resolveReferenceForApi(refStored, { signal });
@@ -192,6 +248,7 @@ export async function generatePersonalImage(opts) {
             promptPreview: finalPrompt.slice(0, 160),
             refKind: /^data:image\//i.test(refForApi) ? 'data-uri' : 'url',
             refChars: refForApi.length,
+            subject: subject?.id || subject?.nickname || '?',
         });
     } catch {
         // ignore
@@ -217,19 +274,21 @@ export async function generatePersonalImage(opts) {
  * Create an image_prompt message and kick off generation.
  * @param {import('./storage.js').MomoStore} store
  * @param {string} peerId
- * @param {{ prompt: string, from?: 'me'|'them' }} opts
+ * @param {{ prompt: string, from?: 'me'|'them', useUserReference?: boolean }} opts
  */
 export function appendImagePromptMessage(store, peerId, opts) {
     const prompt = String(opts?.prompt || '').trim().slice(0, 600);
     const from = opts?.from === 'me' ? 'me' : 'them';
+    const useUserReference = opts?.useUserReference === true;
     const msg = {
         id: uid('msg'),
         from,
         type: 'image_prompt',
-        text: `[个人图片]（${prompt}）`,
+        text: useUserReference ? `[用户照片]（${prompt}）` : `[个人图片]（${prompt}）`,
         imagePrompt: prompt,
         imageGenStatus: 'idle',
-        usePersonalReference: true,
+        usePersonalReference: !useUserReference,
+        useUserReference,
         createdAt: store.now(),
     };
     store.appendMessage(peerId, msg);
@@ -251,25 +310,35 @@ export async function fulfillImagePromptMessage(store, peerId, messageId, hooks 
     const peer = store.getFriend(peerId);
     const messages = store.getMessages(peerId);
     const message = messages.find((m) => String(m?.id || '') === String(messageId || ''));
-    if (!peer || !message) {
+    if (!message || (!peer && message.from !== 'me')) {
         _locks.delete(lockKey);
         return;
     }
 
     const settings = store.getSettings();
+    const useUser = message.useUserReference === true || /^\[\s*用户照片\s*\]/.test(String(message.text || ''));
+    const subject = useUser ? store.getProfile() : peer;
     const prompt = String(message.imagePrompt || parsePersonalImageTag(message.text)?.prompt || '').trim();
 
     store.updateMessage(peerId, messageId, {
         imageGenStatus: 'loading',
         imageGenError: '',
         type: 'image_prompt',
-        usePersonalReference: true,
+        usePersonalReference: !useUser,
+        useUserReference: useUser,
         imagePrompt: prompt,
     });
     hooks.onUpdate?.();
 
     try {
-        const result = await generatePersonalImage({ peer, prompt, settings });
+        const result = await generatePersonalImage({
+            subject,
+            prompt,
+            settings,
+            noRefHint: useUser
+                ? '请先在「我」页上传自己的形象参考图'
+                : '请先在好友编辑资料里上传个人形象参考图',
+        });
         store.updateMessage(peerId, messageId, {
             type: 'image',
             text: prompt ? `[图片] ${prompt}` : '[图片]',
@@ -296,20 +365,21 @@ export async function fulfillImagePromptMessage(store, peerId, messageId, hooks 
 }
 
 /**
- * If bubble text is a personal-image tag, append + generate; else return false.
+ * If bubble text is an image tag / 【图片】 placeholder, append + generate.
  */
 export async function tryHandlePersonalImageBubble(store, peerId, bubbleText, hooks = {}) {
     const parsed = parsePersonalImageTag(bubbleText);
     if (!parsed) return false;
     const settings = store.getSettings();
     if (!isSeedreamConfigured(settings)) return false;
+    const peer = store.getFriend(peerId);
+    if (!getPeerReferenceImage(peer)) return false;
 
     const msg = appendImagePromptMessage(store, peerId, {
         prompt: parsed.prompt,
         from: 'them',
     });
     hooks.onUpdate?.();
-    // fire-and-forget generation; errors surface on the card
     fulfillImagePromptMessage(store, peerId, msg.id, hooks).catch((e) => {
         console.warn('[st-momo] personal image gen failed', e);
     });

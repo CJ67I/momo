@@ -3,9 +3,11 @@ import {
     appendImagePromptMessage,
     fulfillImagePromptMessage,
     getPeerReferenceImage,
+    getUserReferenceImage,
     isSeedreamConfigured,
     prepareReferenceImage,
     tryHandlePersonalImageBubble,
+    userAskedForPhoto,
 } from '../image-gen.js';
 import { generateFriendPersona } from '../npc-persona.js';
 import { avatarGradient, escapeHtml, formatTime, toast, uid } from '../utils.js';
@@ -199,10 +201,15 @@ export class ChatView {
         const messages = this.app.store.getMessages(peer.id);
         const bubbles = messages.map((m) => this._renderBubble(m, peer)).join('');
         const settings = this.app.store.getSettings();
+        const profile = this.app.store.getProfile();
         const seedreamOk = isSeedreamConfigured(settings);
-        const hasRef = Boolean(getPeerReferenceImage(peer));
-        const genBtn = seedreamOk
-            ? `<button type="button" class="mm-icon-btn mm-gen-image-btn" data-action="request-image" title="请求形象图" aria-label="请求形象图" ${hasRef ? '' : 'disabled'}>图</button>`
+        const hasPeerRef = Boolean(getPeerReferenceImage(peer));
+        const hasUserRef = Boolean(getUserReferenceImage(profile));
+        const peerImgBtn = seedreamOk
+            ? `<button type="button" class="mm-icon-btn mm-gen-image-btn" data-action="request-image" title="生成对方形象图（输入框可写提示词）" aria-label="对方形象图" ${hasPeerRef ? '' : 'disabled'}>图</button>`
+            : '';
+        const myImgBtn = seedreamOk
+            ? `<button type="button" class="mm-icon-btn mm-gen-image-btn is-me-img" data-action="request-my-image" title="发送我的形象图（输入框写提示词）" aria-label="我的形象图" ${hasUserRef ? '' : 'disabled'}>我</button>`
             : '';
 
         const shown = this._displayLight();
@@ -212,13 +219,15 @@ export class ChatView {
                 ? '<div class="mm-typing is-wait" id="mm-typing">等待连发中…</div>'
                 : '';
 
-        const hint = !canUseTavernApi()
-            ? '酒馆 API 未在线，回复将提示生成失败'
-            : seedreamOk
-                ? (hasRef
-                    ? '绿灯空闲 · 可点「图」或让对方发[个人图片]'
-                    : '已启用 Seedream：请先在「··· → 编辑资料」上传个人形象参考图')
-                : '绿灯空闲 · 黄灯可连发 · 红灯思考中仍可输入';
+        let hint = '绿灯空闲 · 黄灯可连发 · 红灯思考中仍可输入';
+        if (!canUseTavernApi()) {
+            hint = '酒馆 API 未在线，回复将提示生成失败';
+        } else if (seedreamOk) {
+            const bits = [];
+            bits.push(hasPeerRef ? '「图」=对方' : '对方未上传参考图');
+            bits.push(hasUserRef ? '「我」=自己形象' : '请到「我」页上传自己参考图');
+            hint = bits.join(' · ');
+        }
 
         return `
             <section class="mm-page mm-chat-thread mm-page-enter">
@@ -231,8 +240,9 @@ export class ChatView {
                 ${this._signalMarkup()}
                 <div class="mm-api-hint">${escapeHtml(hint)}</div>
                 <form class="mm-composer" id="mm-composer">
-                    ${genBtn}
-                    <input type="text" id="mm-chat-input" placeholder="说点什么…（可连发多条）" maxlength="200" autocomplete="off" />
+                    ${peerImgBtn}
+                    ${myImgBtn}
+                    <input type="text" id="mm-chat-input" placeholder="说点什么… 或写提示词后点「图/我」" maxlength="200" autocomplete="off" />
                     <button type="submit" class="mm-btn">发送</button>
                 </form>
             </section>
@@ -859,7 +869,10 @@ export class ChatView {
         root.querySelector('[data-action="back-list"]')?.addEventListener('click', () => this.closeThread());
 
         root.querySelector('[data-action="request-image"]')?.addEventListener('click', () => {
-            this._requestPersonalImage();
+            this._requestPersonalImage({ useUserReference: false });
+        });
+        root.querySelector('[data-action="request-my-image"]')?.addEventListener('click', () => {
+            this._requestPersonalImage({ useUserReference: true });
         });
 
         const form = root.querySelector('#mm-composer');
@@ -876,18 +889,27 @@ export class ChatView {
         this._paintSignal();
     }
 
-    /** Manual: create image_prompt + Seedream generate for current peer. */
-    _requestPersonalImage() {
+    /**
+     * Manual Seedream generate.
+     * @param {{ useUserReference?: boolean }} [opts]
+     */
+    _requestPersonalImage(opts = {}) {
         const peerId = this.activePeerId;
         const peer = peerId ? this.app.store.getFriend(peerId) : null;
         if (!peer) return;
         const settings = this.app.store.getSettings();
+        const useUser = opts.useUserReference === true;
         if (!isSeedreamConfigured(settings)) {
             toast('请先在「我」页启用 Seedream 并填写 API Key', 'warning');
             return;
         }
-        if (!getPeerReferenceImage(peer)) {
-            toast('请先在编辑资料里上传个人形象参考图', 'warning');
+        if (useUser) {
+            if (!getUserReferenceImage(this.app.store.getProfile())) {
+                toast('请先在「我」页上传自己的形象参考图', 'warning');
+                return;
+            }
+        } else if (!getPeerReferenceImage(peer)) {
+            toast('请先在编辑资料里上传对方形象参考图', 'warning');
             return;
         }
         const input = document.getElementById('mm-chat-input');
@@ -895,7 +917,8 @@ export class ChatView {
         if (input) input.value = '';
         const msg = appendImagePromptMessage(this.app.store, peer.id, {
             prompt: scene.slice(0, 200),
-            from: 'them',
+            from: useUser ? 'me' : 'them',
+            useUserReference: useUser,
         });
         this._refreshThreadSoft();
         fulfillImagePromptMessage(this.app.store, peer.id, msg.id, {
@@ -1006,22 +1029,25 @@ export class ChatView {
             if (!bubbles?.length) {
                 toast('回复生成失败：AI 未返回有效内容', 'error');
             } else {
+                let imageHandled = false;
+                const onImgUpdate = () => {
+                    if (this.activePeerId === peer.id) {
+                        this.app.store.markRead(peer.id);
+                        this._refreshThreadSoft();
+                    }
+                };
                 await deliverBubbles(bubbles, async (bubble) => {
                     if (allowPersonalImage) {
                         const handled = await tryHandlePersonalImageBubble(
                             this.app.store,
                             peer.id,
                             bubble,
-                            {
-                                onUpdate: () => {
-                                    if (this.activePeerId === peer.id) {
-                                        this.app.store.markRead(peer.id);
-                                        this._refreshThreadSoft();
-                                    }
-                                },
-                            },
+                            { onUpdate: onImgUpdate },
                         );
-                        if (handled) return;
+                        if (handled) {
+                            imageHandled = true;
+                            return;
+                        }
                     }
                     this.app.store.appendMessage(peer.id, {
                         id: uid('msg'),
@@ -1034,6 +1060,18 @@ export class ChatView {
                         this._refreshThreadSoft();
                     }
                 });
+
+                // Fallback: user asked for a photo but model only wrote text / 【图片】占位未识别
+                if (allowPersonalImage && !imageHandled && userAskedForPhoto(userText)) {
+                    const msg = appendImagePromptMessage(this.app.store, peer.id, {
+                        prompt: 'casual selfie matching the chat vibe, natural lighting',
+                        from: 'them',
+                    });
+                    onImgUpdate();
+                    fulfillImagePromptMessage(this.app.store, peer.id, msg.id, {
+                        onUpdate: onImgUpdate,
+                    }).catch((e) => console.warn('[st-momo] photo fallback failed', e));
+                }
                 this._syncInterop();
             }
         } catch (err) {

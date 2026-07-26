@@ -1,4 +1,5 @@
 import { callMomoGenerate, ensureGenerationGuard } from './api-client.js';
+import { isImageIntentBubble } from './image-gen.js';
 import { buildInteractionContext, formatContextForPrompt, getApiStatus } from './st-bridge.js';
 
 /**
@@ -71,7 +72,9 @@ export function parseReplyBubbles(raw) {
     let list = [];
 
     if (s.includes('|||')) {
-        list = s.split('|||').map((t) => cleanBubbleText(t)).filter(Boolean);
+        list = s.split('|||')
+            .map((t) => (isImageIntentBubble(t) ? String(t).trim() : cleanBubbleText(t)))
+            .filter(Boolean);
     }
 
     if (!list.length) {
@@ -106,7 +109,7 @@ export function parseReplyBubbles(raw) {
         list = s
             .split(/[\n\r]+/)
             .map((line) => line.replace(/^\s*[-*]?\s*\d+[\.\)、]\s*/, '').trim())
-            .map((t) => (/^\[\s*个人图片\s*\]/.test(t) ? t.trim() : cleanBubbleText(t)))
+            .map((t) => (isImageIntentBubble(t) ? t.trim() : cleanBubbleText(t)))
             .filter((t) => t.length >= 1 && !/^(回复|输出|json)/i.test(t));
     }
 
@@ -118,12 +121,12 @@ export function parseReplyBubbles(raw) {
     }
 
     // Drop truncated tail bubble (common when max_tokens cuts mid-string)
-    while (list.length && looksTruncated(list[list.length - 1])) {
+    while (list.length && looksTruncated(list[list.length - 1]) && !isImageIntentBubble(list[list.length - 1])) {
         list.pop();
     }
 
     return list
-        .map((t) => (/^\[\s*个人图片\s*\]/.test(t) ? t.slice(0, 200) : t.slice(0, 80)))
+        .map((t) => (isImageIntentBubble(t) ? t.slice(0, 200) : t.slice(0, 80)))
         .filter(Boolean)
         .slice(0, 6);
 }
@@ -139,6 +142,12 @@ function sanitizeNpcBubbles(bubbles, ids) {
 
     const out = [];
     for (const raw of bubbles) {
+        // Keep image tags intact (【图片】 / [个人图片] …) before cleaning
+        if (isImageIntentBubble(raw)) {
+            out.push(String(raw).trim().slice(0, 200));
+            continue;
+        }
+
         let t = cleanBubbleText(raw);
         if (!t) continue;
 
@@ -154,7 +163,7 @@ function sanitizeNpcBubbles(bubbles, ids) {
         );
         if (claimsPlayer) continue;
         if (player && (t.startsWith(`${player}：`) || t.startsWith(`${player}:`))) continue;
-        if (/^\[\s*个人图片\s*\]/.test(t)) {
+        if (isImageIntentBubble(t)) {
             out.push(t.slice(0, 200));
             continue;
         }
@@ -179,7 +188,7 @@ function formatMomoHistory(history, peerName, playerName) {
                 const tip = String(m.imagePrompt || '').trim();
                 return `${who}: [图片]${tip ? `（${tip.slice(0, 40)}）` : ''}`;
             }
-            if (m.type === 'image_prompt' || /^\[\s*个人图片\s*\]/.test(String(m.text || ''))) {
+            if (m.type === 'image_prompt' || isImageIntentBubble(m.text)) {
                 return `${who}: ${String(m.text || '[个人图片]').slice(0, 120)}`;
             }
             return `${who}: ${cleanBubbleText(m.text)}`;
@@ -240,8 +249,12 @@ export async function generateNpcReplies(opts) {
             '先接住对方上一句再说自己的事；不要连续自我介绍或自我夸耀。',
             peer.speechStyle ? `个人口癖参考：${String(peer.speechStyle).slice(0, 80)}` : '',
             canSendSelfie
-                ? '若对方明确要看你的照片/自拍/形象，可单独用一条输出：[个人图片]（简短画面描述，英文或中文均可，不超过40字）。不要滥发，每轮最多一条，且该条不要夹杂其他文字。'
-                : '',
+                ? [
+                    '你已开通发图：当对方要看照片/自拍/形象时，必须另起一条、且整条只输出：',
+                    '[个人图片]（简短画面描述，不超过40字）',
+                    '禁止输出【图片】……、[图片]…… 这类文字占位；禁止在同一条里混写其他聊天内容。每轮最多一条图片标签。',
+                ].join('')
+                : '你当前不能发真实图片；不要写【图片】或假装已发图。',
         ].filter(Boolean);
 
         const systemPrompt = [

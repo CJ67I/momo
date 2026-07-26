@@ -1,4 +1,5 @@
 import { canUseTavernApi } from '../ai.js';
+import { getUserReferenceImage, prepareReferenceImage } from '../image-gen.js';
 import { createNpcFromCharacter } from '../npc-factory.js';
 import {
     getApiStatus,
@@ -178,7 +179,8 @@ export class MeView {
                 <div class="mm-card mm-bridge-card">
                     <h3>Seedream 生图（AtlasCloud）</h3>
                     <p class="mm-muted" style="margin:0 0 8px;font-size:12px;line-height:1.5">
-                        使用 <code>bytedance/seedream-v5.0-pro/edit</code>：好友编辑页上传参考图后，可在私聊生成形象图。
+                        使用 <code>bytedance/seedream-v5.0-pro/edit</code>。好友参考图在聊天「编辑资料」上传；自己的参考图在下方资料区上传。
+                        私聊「图」=对方形象，「我」=自己形象（输入框可写提示词）。
                         API Key 见 <a href="https://console.atlascloud.ai" target="_blank" rel="noopener">console.atlascloud.ai</a>。
                     </p>
                     <label class="mm-switch" style="margin-bottom:8px">
@@ -249,6 +251,27 @@ export class MeView {
                         </select>
                     </label>
                     <label>简介<textarea name="bio" rows="3" maxlength="80">${escapeHtml(p.bio)}</textarea></label>
+                    <div class="mm-ref-block" id="mm-me-ref-block">
+                        <div class="mm-edit-persona-head"><span>我的形象参考图（Seedream）</span></div>
+                        <p class="mm-muted" style="margin:0;font-size:11px;line-height:1.45">
+                            上传后，私聊里点「我」并用输入框写提示词，即可基于自己的参考图生图发送。
+                        </p>
+                        <div class="mm-ref-row">
+                            <div class="mm-ref-preview" id="mm-me-ref-preview">${getUserReferenceImage(p) ? '' : '无'}</div>
+                            <div class="mm-ref-actions">
+                                <input type="file" id="mm-me-ref-file" accept="image/png,image/jpeg,image/webp,image/gif,image/*" hidden />
+                                <button type="button" class="mm-btn mm-btn-ghost" id="mm-me-ref-upload">${getUserReferenceImage(p) ? '替换参考图' : '上传参考图'}</button>
+                                <button type="button" class="mm-btn mm-btn-ghost" id="mm-me-ref-clear" ${getUserReferenceImage(p) ? '' : 'disabled'}>清除</button>
+                                <label class="mm-switch" style="margin-top:6px">
+                                    <span>启用我的参考图</span>
+                                    <input type="checkbox" id="mm-me-ref-enabled" ${getUserReferenceImage(p) && p.seedreamRefEnabled !== false ? 'checked' : ''} ${getUserReferenceImage(p) ? '' : 'disabled'} />
+                                </label>
+                            </div>
+                        </div>
+                        <label>外貌提示词（可选）
+                            <input id="mm-me-ref-tags" maxlength="200" value="${escapeHtml(p.seedreamPromptTags || '')}" placeholder="黑发、短发、眼镜…" />
+                        </label>
+                    </div>
                     <button type="submit" class="mm-btn mm-btn-block">保存资料</button>
                 </form>
 
@@ -324,6 +347,55 @@ export class MeView {
             notifySettingSaved(root, `已保存：${label}（${checked ? '开' : '关'}）`);
         };
 
+        // Self reference image state (avoid stuffing huge data URI into HTML)
+        let pendingMeRefUrl = String(this.app.store.getProfile().seedreamRefUrl || '').trim();
+        let pendingMeRefDataUrl = String(this.app.store.getProfile().seedreamRefDataUrl || '').trim();
+        const meRefPreview = root.querySelector('#mm-me-ref-preview');
+        const meRefEnabled = root.querySelector('#mm-me-ref-enabled');
+        const meRefUpload = root.querySelector('#mm-me-ref-upload');
+        const meRefClear = root.querySelector('#mm-me-ref-clear');
+        const meRefFile = root.querySelector('#mm-me-ref-file');
+
+        const paintMeRef = (url, dataUrl = '') => {
+            pendingMeRefUrl = String(url || '').trim();
+            pendingMeRefDataUrl = String(dataUrl || '').trim();
+            const preview = pendingMeRefDataUrl || pendingMeRefUrl;
+            if (meRefPreview) {
+                if (preview) {
+                    meRefPreview.style.backgroundImage = `url("${preview.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}")`;
+                    meRefPreview.textContent = '';
+                } else {
+                    meRefPreview.style.backgroundImage = '';
+                    meRefPreview.textContent = '无';
+                }
+            }
+            if (meRefClear) meRefClear.disabled = !preview;
+            if (meRefEnabled) {
+                meRefEnabled.disabled = !preview;
+                if (!preview) meRefEnabled.checked = false;
+                else if (!meRefEnabled.checked) meRefEnabled.checked = true;
+            }
+            if (meRefUpload) meRefUpload.textContent = preview ? '替换参考图' : '上传参考图';
+        };
+        paintMeRef(pendingMeRefUrl, pendingMeRefDataUrl);
+
+        meRefUpload?.addEventListener('click', () => meRefFile?.click());
+        meRefClear?.addEventListener('click', () => paintMeRef('', ''));
+        meRefFile?.addEventListener('change', async () => {
+            const file = meRefFile.files?.[0];
+            meRefFile.value = '';
+            if (!file) return;
+            try {
+                toast('正在处理参考图…', 'info');
+                const prepared = await prepareReferenceImage(file, this.app.store.getSettings());
+                paintMeRef(prepared.url, prepared.dataUrl || '');
+                toast(prepared.storedAs === 'remote' ? '参考图已就绪' : '已用本地图（仍可生图）', 'success');
+            } catch (err) {
+                console.warn('[st-momo] me ref upload failed', err);
+                toast(err?.message || '参考图处理失败', 'error');
+            }
+        });
+
         root.querySelector('#mm-profile-form')?.addEventListener('submit', async (e) => {
             e.preventDefault();
             if (!confirmSettingSave('个人资料')) return;
@@ -333,6 +405,9 @@ export class MeView {
             const city = String(fd.get('city') || '').trim();
             const gender = normalizeGender(fd.get('gender') || 'male');
             const bio = String(fd.get('bio') || '').trim();
+            const seedreamPromptTags = String(root.querySelector('#mm-me-ref-tags')?.value || '').trim().slice(0, 200);
+            const hasMeRef = Boolean(pendingMeRefUrl || pendingMeRefDataUrl);
+            const seedreamRefEnabled = hasMeRef && Boolean(meRefEnabled?.checked);
             const prev = this.app.store.getProfile();
             const prevGender = normalizeGender(prev.gender);
             const prevCity = String(prev.city || '').trim();
@@ -344,6 +419,10 @@ export class MeView {
                 gender,
                 bio,
                 avatarText: nickname.slice(0, 1) || '我',
+                seedreamRefUrl: pendingMeRefUrl,
+                seedreamRefDataUrl: pendingMeRefDataUrl,
+                seedreamRefEnabled,
+                seedreamPromptTags,
             });
 
             if (prevCity !== city) {
