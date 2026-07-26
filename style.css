@@ -800,6 +800,112 @@ body.st-momo-scroll-lock {
     border-bottom-left-radius: 6px;
 }
 
+.mm-bubble.mm-bubble-image {
+    padding: 6px;
+    max-width: min(220px, 72vw);
+    overflow: hidden;
+}
+
+.mm-bubble.mm-bubble-image img {
+    display: block;
+    width: 100%;
+    border-radius: 12px;
+    background: #f3f4f6;
+}
+
+.mm-image-caption {
+    margin-top: 6px;
+    padding: 0 4px 2px;
+    font-size: 11px;
+    line-height: 1.35;
+    opacity: 0.85;
+    word-break: break-word;
+}
+
+.mm-image-status {
+    padding: 10px 8px 4px;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.mm-bubble-image.is-loading .mm-image-status {
+    color: var(--mm-muted);
+}
+
+.mm-bubble-image.is-failed .mm-image-status {
+    color: #c0392b;
+}
+
+.mm-image-retry {
+    display: inline-block;
+    margin: 4px 4px 2px;
+    border: 0;
+    background: rgba(0, 0, 0, 0.06);
+    color: inherit;
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.mm-bubble-row.is-me .mm-image-retry {
+    background: rgba(255, 255, 255, 0.22);
+    color: #fff;
+}
+
+.mm-gen-image-btn {
+    flex: 0 0 auto;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--mm-pink, #ff5a8a);
+}
+
+.mm-gen-image-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+.mm-ref-block {
+    display: grid;
+    gap: 8px;
+    padding: 10px;
+    border-radius: 12px;
+    background: #faf7f8;
+    border: 1px solid var(--mm-line);
+}
+
+.mm-ref-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+}
+
+.mm-ref-preview {
+    width: 64px;
+    height: 64px;
+    border-radius: 10px;
+    background: #fff center/cover no-repeat;
+    border: 1px solid var(--mm-line);
+    color: var(--mm-muted);
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    overflow: hidden;
+}
+
+.mm-ref-actions {
+    flex: 1;
+    min-width: 0;
+    display: grid;
+    gap: 6px;
+}
+
 .mm-composer {
     display: flex;
     gap: 8px;

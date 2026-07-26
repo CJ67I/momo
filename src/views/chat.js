@@ -1,4 +1,12 @@
 import { canUseTavernApi, deliverBubbles, generateNpcReplies } from '../ai.js';
+import {
+    appendImagePromptMessage,
+    fulfillImagePromptMessage,
+    getPeerReferenceImage,
+    isSeedreamConfigured,
+    prepareReferenceImage,
+    tryHandlePersonalImageBubble,
+} from '../image-gen.js';
 import { generateFriendPersona } from '../npc-persona.js';
 import { avatarGradient, escapeHtml, formatTime, toast, uid } from '../utils.js';
 
@@ -127,6 +135,61 @@ export class ChatView {
         `;
     }
 
+    /**
+     * @param {object} m
+     * @param {object} peer
+     */
+    _renderBubble(m, peer) {
+        const mine = m.from === 'me';
+        const avatar = mine
+            ? ''
+            : `<div class="mm-avatar sm" style="background:${avatarGradient(peer.id)}">${escapeHtml(peer.avatarText || '·')}</div>`;
+        const status = String(m.imageGenStatus || '').trim();
+        const imageUrl = String(m.imageUrl || '').trim();
+        const prompt = String(m.imagePrompt || '').trim();
+        const isImageCard = m.type === 'image' || m.type === 'image_prompt' || Boolean(imageUrl) || status === 'loading' || status === 'failed';
+
+        if (isImageCard) {
+            let body = '';
+            if (imageUrl && status !== 'failed') {
+                body = `
+                    <div class="mm-bubble mm-bubble-image">
+                        <img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(prompt || '图片')}" loading="lazy" />
+                        ${prompt ? `<div class="mm-image-caption">${escapeHtml(prompt)}</div>` : ''}
+                        <button type="button" class="mm-image-retry" data-action="regen-image" data-msg-id="${escapeHtml(m.id)}">重绘</button>
+                    </div>`;
+            } else if (status === 'loading') {
+                body = `
+                    <div class="mm-bubble mm-bubble-image is-loading">
+                        <div class="mm-image-status">正在生成形象图…</div>
+                        ${prompt ? `<div class="mm-image-caption">${escapeHtml(prompt)}</div>` : ''}
+                    </div>`;
+            } else if (status === 'failed') {
+                body = `
+                    <div class="mm-bubble mm-bubble-image is-failed">
+                        <div class="mm-image-status">生图失败：${escapeHtml(m.imageGenError || '未知错误')}</div>
+                        ${prompt ? `<div class="mm-image-caption">${escapeHtml(prompt)}</div>` : ''}
+                        <button type="button" class="mm-image-retry" data-action="regen-image" data-msg-id="${escapeHtml(m.id)}">重试</button>
+                    </div>`;
+            } else {
+                body = `
+                    <div class="mm-bubble mm-bubble-image">
+                        <div class="mm-image-status">待生成形象图</div>
+                        ${prompt ? `<div class="mm-image-caption">${escapeHtml(prompt)}</div>` : ''}
+                        <button type="button" class="mm-image-retry" data-action="regen-image" data-msg-id="${escapeHtml(m.id)}">生成</button>
+                    </div>`;
+            }
+            return `<div class="mm-bubble-row ${mine ? 'is-me' : 'is-them'} mm-bubble-in">${avatar}${body}</div>`;
+        }
+
+        return `
+            <div class="mm-bubble-row ${mine ? 'is-me' : 'is-them'} mm-bubble-in">
+                ${avatar}
+                <div class="mm-bubble">${escapeHtml(m.text)}</div>
+            </div>
+        `;
+    }
+
     _renderThread() {
         const peer = this.app.store.getFriend(this.activePeerId);
         if (!peer) {
@@ -134,17 +197,13 @@ export class ChatView {
             return this._renderList();
         }
         const messages = this.app.store.getMessages(peer.id);
-        const bubbles = messages
-            .map((m) => {
-                const mine = m.from === 'me';
-                return `
-                    <div class="mm-bubble-row ${mine ? 'is-me' : 'is-them'} mm-bubble-in">
-                        ${mine ? '' : `<div class="mm-avatar sm" style="background:${avatarGradient(peer.id)}">${escapeHtml(peer.avatarText || '·')}</div>`}
-                        <div class="mm-bubble">${escapeHtml(m.text)}</div>
-                    </div>
-                `;
-            })
-            .join('');
+        const bubbles = messages.map((m) => this._renderBubble(m, peer)).join('');
+        const settings = this.app.store.getSettings();
+        const seedreamOk = isSeedreamConfigured(settings);
+        const hasRef = Boolean(getPeerReferenceImage(peer));
+        const genBtn = seedreamOk
+            ? `<button type="button" class="mm-icon-btn mm-gen-image-btn" data-action="request-image" title="请求形象图" aria-label="请求形象图" ${hasRef ? '' : 'disabled'}>图</button>`
+            : '';
 
         const shown = this._displayLight();
         const typing = shown === 'red'
@@ -152,6 +211,14 @@ export class ChatView {
             : shown === 'yellow'
                 ? '<div class="mm-typing is-wait" id="mm-typing">等待连发中…</div>'
                 : '';
+
+        const hint = !canUseTavernApi()
+            ? '酒馆 API 未在线，回复将提示生成失败'
+            : seedreamOk
+                ? (hasRef
+                    ? '绿灯空闲 · 可点「图」或让对方发[个人图片]'
+                    : '已启用 Seedream：请先在「··· → 编辑资料」上传个人形象参考图')
+                : '绿灯空闲 · 黄灯可连发 · 红灯思考中仍可输入';
 
         return `
             <section class="mm-page mm-chat-thread mm-page-enter">
@@ -162,8 +229,9 @@ export class ChatView {
                 </header>
                 <div class="mm-thread" id="mm-thread">${bubbles}${typing}</div>
                 ${this._signalMarkup()}
-                <div class="mm-api-hint">${canUseTavernApi() ? '绿灯空闲 · 黄灯可连发 · 红灯思考中仍可输入' : '酒馆 API 未在线，回复将提示生成失败'}</div>
+                <div class="mm-api-hint">${escapeHtml(hint)}</div>
                 <form class="mm-composer" id="mm-composer">
+                    ${genBtn}
                     <input type="text" id="mm-chat-input" placeholder="说点什么…（可连发多条）" maxlength="200" autocomplete="off" />
                     <button type="submit" class="mm-btn">发送</button>
                 </form>
@@ -185,17 +253,7 @@ export class ChatView {
         }
 
         const messages = this.app.store.getMessages(peer.id);
-        const bubbles = messages
-            .map((m) => {
-                const mine = m.from === 'me';
-                return `
-                    <div class="mm-bubble-row ${mine ? 'is-me' : 'is-them'} mm-bubble-in">
-                        ${mine ? '' : `<div class="mm-avatar sm" style="background:${avatarGradient(peer.id)}">${escapeHtml(peer.avatarText || '·')}</div>`}
-                        <div class="mm-bubble">${escapeHtml(m.text)}</div>
-                    </div>
-                `;
-            })
-            .join('');
+        const bubbles = messages.map((m) => this._renderBubble(m, peer)).join('');
 
         const shown = this._displayLight();
         const typingHtml = shown === 'red'
@@ -207,6 +265,29 @@ export class ChatView {
         thread.innerHTML = `${bubbles}${typingHtml}`;
         thread.scrollTop = thread.scrollHeight;
         this._paintSignal();
+        this._bindImageActions(thread);
+    }
+
+    /**
+     * @param {HTMLElement|null} root
+     */
+    _bindImageActions(root) {
+        if (!root) return;
+        root.querySelectorAll('[data-action="regen-image"]').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const msgId = btn.getAttribute('data-msg-id');
+                if (!msgId || !this.activePeerId) return;
+                fulfillImagePromptMessage(this.app.store, this.activePeerId, msgId, {
+                    onUpdate: () => {
+                        if (this.activePeerId) this._refreshThreadSoft();
+                    },
+                }).catch((err) => {
+                    toast(err?.message || '生图失败', 'error');
+                });
+            });
+        });
     }
 
     _paintSignal() {
@@ -339,6 +420,9 @@ export class ChatView {
 
         const hasPersona = Boolean(String(friend.persona || '').trim() && String(friend.speechStyle || '').trim());
         const tags = Array.isArray(friend.tags) ? friend.tags.join('、') : '';
+        const refUrl = String(friend.seedreamRefUrl || friend.referenceImage || '').trim();
+        const refEnabled = refUrl && friend.seedreamRefEnabled !== false && friend.seedreamRefEnabled !== 'false';
+        const promptTags = String(friend.seedreamPromptTags || friend.imageTags || '').trim();
         const host = this._overlayHost();
         const wrap = document.createElement('div');
         wrap.id = 'mm-friend-overlay';
@@ -351,6 +435,30 @@ export class ChatView {
                     <label>昵称<input name="nickname" maxlength="16" required value="${escapeHtml(friend.nickname || '')}" /></label>
                     <label>简介<input name="bio" maxlength="40" value="${escapeHtml(friend.bio || '')}" /></label>
                     <label>标签（顿号分隔）<input name="tags" maxlength="60" value="${escapeHtml(tags)}" placeholder="徒步、咖啡" /></label>
+                    <div class="mm-ref-block">
+                        <div class="mm-edit-persona-head">
+                            <span>个人形象参考图（Seedream）</span>
+                        </div>
+                        <p class="mm-muted" style="margin:0;font-size:11px;line-height:1.45">
+                            上传后，AI 回复 <b>[个人图片]（描述）</b> 或点聊天「图」时，会基于这张图调用 Seedream 编辑生图。
+                        </p>
+                        <div class="mm-ref-row">
+                            <div class="mm-ref-preview" id="mm-ref-preview" style="${refUrl ? `background-image:url('${escapeHtml(refUrl)}')` : ''}">${refUrl ? '' : '无'}</div>
+                            <div class="mm-ref-actions">
+                                <input type="file" id="mm-ref-file" accept="image/png,image/jpeg,image/webp,image/gif,image/*" hidden />
+                                <button type="button" class="mm-btn mm-btn-ghost" id="mm-ref-upload">${refUrl ? '替换参考图' : '上传参考图'}</button>
+                                <button type="button" class="mm-btn mm-btn-ghost" id="mm-ref-clear" ${refUrl ? '' : 'disabled'}>清除</button>
+                                <label class="mm-switch" style="margin-top:6px">
+                                    <span>启用参考图</span>
+                                    <input type="checkbox" name="seedreamRefEnabled" ${refEnabled ? 'checked' : ''} ${refUrl ? '' : 'disabled'} />
+                                </label>
+                            </div>
+                        </div>
+                        <label>外貌提示词（可选，拼到生图 prompt 前）
+                            <input name="seedreamPromptTags" maxlength="200" value="${escapeHtml(promptTags)}" placeholder="1girl, long black hair, …" />
+                        </label>
+                        <input type="hidden" name="seedreamRefUrl" value="${escapeHtml(refUrl)}" />
+                    </div>
                     <div class="mm-edit-persona-head">
                         <span>人设 / 说话风格</span>
                         <button type="button" class="mm-link" data-edit="regen" id="mm-persona-regen">重新生成</button>
@@ -375,6 +483,49 @@ export class ChatView {
         const tagsEl = form?.querySelector('[name="tags"]');
         const statusEl = wrap.querySelector('#mm-persona-status');
         const regenBtn = wrap.querySelector('#mm-persona-regen');
+        const refUrlEl = form?.querySelector('[name="seedreamRefUrl"]');
+        const refEnabledEl = form?.querySelector('[name="seedreamRefEnabled"]');
+        const refPreview = wrap.querySelector('#mm-ref-preview');
+        const refFile = wrap.querySelector('#mm-ref-file');
+        const refUploadBtn = wrap.querySelector('#mm-ref-upload');
+        const refClearBtn = wrap.querySelector('#mm-ref-clear');
+
+        const paintRefPreview = (url) => {
+            const u = String(url || '').trim();
+            if (refPreview) {
+                refPreview.style.backgroundImage = u ? `url("${u}")` : '';
+                refPreview.textContent = u ? '' : '无';
+            }
+            if (refClearBtn) refClearBtn.disabled = !u;
+            if (refEnabledEl) {
+                refEnabledEl.disabled = !u;
+                if (!u) refEnabledEl.checked = false;
+                else if (!refEnabledEl.checked) refEnabledEl.checked = true;
+            }
+            if (refUploadBtn) refUploadBtn.textContent = u ? '替换参考图' : '上传参考图';
+            if (refUrlEl) refUrlEl.value = u;
+        };
+
+        refUploadBtn?.addEventListener('click', () => refFile?.click());
+        refClearBtn?.addEventListener('click', () => paintRefPreview(''));
+        refFile?.addEventListener('change', async () => {
+            const file = refFile.files?.[0];
+            refFile.value = '';
+            if (!file) return;
+            try {
+                toast('正在处理参考图…', 'info');
+                const prepared = await prepareReferenceImage(file, this.app.store.getSettings());
+                paintRefPreview(prepared.url);
+                if (prepared.storedAs === 'data' && prepared.uploadError) {
+                    toast('已用本地图（云端上传失败，仍可生图）', 'warning');
+                } else {
+                    toast('参考图已就绪', 'success');
+                }
+            } catch (err) {
+                console.warn('[st-momo] ref upload failed', err);
+                toast(err?.message || '参考图处理失败', 'error');
+            }
+        });
 
         const setPersonaLocked = (locked, statusText) => {
             if (personaEl) personaEl.readOnly = locked;
@@ -437,6 +588,9 @@ export class ChatView {
                 .map((t) => t.trim())
                 .filter(Boolean)
                 .slice(0, 6);
+            const seedreamRefUrl = String(fd.get('seedreamRefUrl') || '').trim();
+            const seedreamPromptTags = String(fd.get('seedreamPromptTags') || '').trim().slice(0, 200);
+            const seedreamRefEnabled = Boolean(seedreamRefUrl) && Boolean(form.querySelector('[name="seedreamRefEnabled"]')?.checked);
 
             this.app.store.updateUser({
                 id,
@@ -447,6 +601,9 @@ export class ChatView {
                 tags: tagList,
                 avatarText: nickname.replace(/[^\u4e00-\u9fa5A-Za-z0-9]/g, '').slice(0, 1) || friend.avatarText || '·',
                 personaReady: true,
+                seedreamRefUrl,
+                seedreamRefEnabled,
+                seedreamPromptTags,
             });
             this._syncInterop();
             this._closeOverlay();
@@ -684,6 +841,10 @@ export class ChatView {
 
         root.querySelector('[data-action="back-list"]')?.addEventListener('click', () => this.closeThread());
 
+        root.querySelector('[data-action="request-image"]')?.addEventListener('click', () => {
+            this._requestPersonalImage();
+        });
+
         const form = root.querySelector('#mm-composer');
         form?.addEventListener('submit', (e) => {
             e.preventDefault();
@@ -691,8 +852,42 @@ export class ChatView {
         });
 
         const thread = root.querySelector('#mm-thread');
-        if (thread) thread.scrollTop = thread.scrollHeight;
+        if (thread) {
+            thread.scrollTop = thread.scrollHeight;
+            this._bindImageActions(thread);
+        }
         this._paintSignal();
+    }
+
+    /** Manual: create image_prompt + Seedream generate for current peer. */
+    _requestPersonalImage() {
+        const peerId = this.activePeerId;
+        const peer = peerId ? this.app.store.getFriend(peerId) : null;
+        if (!peer) return;
+        const settings = this.app.store.getSettings();
+        if (!isSeedreamConfigured(settings)) {
+            toast('请先在「我」页启用 Seedream 并填写 API Key', 'warning');
+            return;
+        }
+        if (!getPeerReferenceImage(peer)) {
+            toast('请先在编辑资料里上传个人形象参考图', 'warning');
+            return;
+        }
+        const input = document.getElementById('mm-chat-input');
+        const scene = String(input?.value || '').trim() || 'casual selfie, natural lighting, looking at camera';
+        if (input) input.value = '';
+        const msg = appendImagePromptMessage(this.app.store, peer.id, {
+            prompt: scene.slice(0, 200),
+            from: 'them',
+        });
+        this._refreshThreadSoft();
+        fulfillImagePromptMessage(this.app.store, peer.id, msg.id, {
+            onUpdate: () => {
+                if (this.activePeerId === peer.id) this._refreshThreadSoft();
+            },
+        }).catch((err) => {
+            toast(err?.message || '生图失败', 'error');
+        });
     }
 
     /**
@@ -777,18 +972,40 @@ export class ChatView {
             ].join('\n');
 
         try {
+            const allowPersonalImage = Boolean(
+                settings.seedreamAutoFromAi !== false
+                && isSeedreamConfigured(settings)
+                && getPeerReferenceImage(peer),
+            );
             const bubbles = await generateNpcReplies({
                 peer,
                 history: this.app.store.getMessages(peer.id),
                 userText,
                 myProfile: this.app.store.getProfile(),
                 useAi: settings.useAiReply,
+                allowPersonalImage,
             });
 
             if (!bubbles?.length) {
                 toast('回复生成失败：AI 未返回有效内容', 'error');
             } else {
                 await deliverBubbles(bubbles, async (bubble) => {
+                    if (allowPersonalImage) {
+                        const handled = await tryHandlePersonalImageBubble(
+                            this.app.store,
+                            peer.id,
+                            bubble,
+                            {
+                                onUpdate: () => {
+                                    if (this.activePeerId === peer.id) {
+                                        this.app.store.markRead(peer.id);
+                                        this._refreshThreadSoft();
+                                    }
+                                },
+                            },
+                        );
+                        if (handled) return;
+                    }
                     this.app.store.appendMessage(peer.id, {
                         id: uid('msg'),
                         from: 'them',

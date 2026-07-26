@@ -176,6 +176,51 @@ export class MeView {
                 </div>
 
                 <div class="mm-card mm-bridge-card">
+                    <h3>Seedream 生图（AtlasCloud）</h3>
+                    <p class="mm-muted" style="margin:0 0 8px;font-size:12px;line-height:1.5">
+                        使用 <code>bytedance/seedream-v5.0-pro/edit</code>：好友编辑页上传参考图后，可在私聊生成形象图。
+                        API Key 见 <a href="https://console.atlascloud.ai" target="_blank" rel="noopener">console.atlascloud.ai</a>。
+                    </p>
+                    <label class="mm-switch" style="margin-bottom:8px">
+                        <span>启用 Seedream 生图</span>
+                        <input type="checkbox" id="mm-seedream-enabled" ${settings.seedreamEnabled ? 'checked' : ''} />
+                    </label>
+                    <label class="mm-switch" style="margin-bottom:8px">
+                        <span>AI 可用 [个人图片] 自动触发生图</span>
+                        <input type="checkbox" id="mm-seedream-auto" ${settings.seedreamAutoFromAi !== false ? 'checked' : ''} />
+                    </label>
+                    <label class="mm-field-label">API Key
+                        <input type="password" id="mm-seedream-key" value="${escapeHtml(settings.seedreamApiKey || '')}" placeholder="ATLASCLOUD_API_KEY" autocomplete="off" />
+                    </label>
+                    <label class="mm-field-label">Base URL
+                        <input type="text" id="mm-seedream-base" value="${escapeHtml(settings.seedreamBaseUrl || 'https://api.atlascloud.ai')}" />
+                    </label>
+                    <label class="mm-field-label">模型
+                        <input type="text" id="mm-seedream-model" value="${escapeHtml(settings.seedreamModel || 'bytedance/seedream-v5.0-pro/edit')}" />
+                    </label>
+                    <label class="mm-field-label">尺寸
+                        <select id="mm-seedream-size">
+                            ${['1024*1024', '1536*1536', '2048*2048', '1152*2048', '2048*1152', '1328*1776', '1776*1328'].map((sz) => `
+                                <option value="${sz}" ${(settings.seedreamSize || '1024*1024') === sz ? 'selected' : ''}>${sz}</option>
+                            `).join('')}
+                        </select>
+                    </label>
+                    <label class="mm-field-label">输出格式
+                        <select id="mm-seedream-format">
+                            <option value="jpeg" ${(settings.seedreamOutputFormat || 'jpeg') === 'jpeg' ? 'selected' : ''}>jpeg</option>
+                            <option value="png" ${settings.seedreamOutputFormat === 'png' ? 'selected' : ''}>png</option>
+                        </select>
+                    </label>
+                    <label class="mm-field-label">Thinking（提示词优化）
+                        <select id="mm-seedream-thinking">
+                            <option value="enabled" ${(settings.seedreamThinking || 'enabled') === 'enabled' ? 'selected' : ''}>enabled</option>
+                            <option value="disabled" ${settings.seedreamThinking === 'disabled' ? 'selected' : ''}>disabled（更快）</option>
+                        </select>
+                    </label>
+                    <button type="button" class="mm-btn mm-btn-block" data-action="seedream-save">保存 Seedream 设定</button>
+                </div>
+
+                <div class="mm-card mm-bridge-card">
                     <h3>好友主动私聊</h3>
                     <label class="mm-switch" style="margin-bottom:8px">
                         <span>允许好友按间隔主动发消息</span>
@@ -381,6 +426,38 @@ export class MeView {
                 proactiveEnabled
                     ? `已开启主动私聊：每 ${proactiveIntervalMin} 陌陌分钟`
                     : '已关闭好友主动私聊',
+            );
+        });
+
+        root.querySelector('[data-action="seedream-save"]')?.addEventListener('click', () => {
+            if (!confirmSettingSave('Seedream 设定')) return;
+            const seedreamEnabled = Boolean(root.querySelector('#mm-seedream-enabled')?.checked);
+            const seedreamAutoFromAi = Boolean(root.querySelector('#mm-seedream-auto')?.checked);
+            const seedreamApiKey = String(root.querySelector('#mm-seedream-key')?.value || '').trim();
+            const seedreamBaseUrl = String(root.querySelector('#mm-seedream-base')?.value || '').trim()
+                || 'https://api.atlascloud.ai';
+            const seedreamModel = String(root.querySelector('#mm-seedream-model')?.value || '').trim()
+                || 'bytedance/seedream-v5.0-pro/edit';
+            const seedreamSize = String(root.querySelector('#mm-seedream-size')?.value || '1024*1024');
+            const seedreamOutputFormat = root.querySelector('#mm-seedream-format')?.value === 'png' ? 'png' : 'jpeg';
+            const seedreamThinking = root.querySelector('#mm-seedream-thinking')?.value === 'disabled'
+                ? 'disabled'
+                : 'enabled';
+            this.app.store.updateSettings({
+                seedreamEnabled,
+                seedreamAutoFromAi,
+                seedreamApiKey,
+                seedreamBaseUrl,
+                seedreamModel,
+                seedreamSize,
+                seedreamOutputFormat,
+                seedreamThinking,
+            });
+            notifySettingSaved(
+                root,
+                seedreamEnabled
+                    ? (seedreamApiKey ? 'Seedream 已启用并保存' : '已启用，但尚未填写 API Key')
+                    : '已关闭 Seedream 生图',
             );
         });
 

@@ -42,6 +42,15 @@ function emptyState() {
             // proactive friend DMs (interval in virtual minutes)
             proactiveEnabled: false,
             proactiveIntervalMin: 30,
+            // Seedream (AtlasCloud) personal image edit
+            seedreamEnabled: false,
+            seedreamApiKey: '',
+            seedreamBaseUrl: 'https://api.atlascloud.ai',
+            seedreamModel: 'bytedance/seedream-v5.0-pro/edit',
+            seedreamSize: '1024*1024',
+            seedreamOutputFormat: 'jpeg',
+            seedreamThinking: 'enabled',
+            seedreamAutoFromAi: true,
         },
     };
 }
@@ -136,6 +145,28 @@ export class MomoStore {
         }
         if (!Number.isFinite(Number(this.state.settings.proactiveIntervalMin))) {
             this.state.settings.proactiveIntervalMin = 30;
+        }
+        if (typeof this.state.settings.seedreamEnabled !== 'boolean') {
+            this.state.settings.seedreamEnabled = false;
+        }
+        if (this.state.settings.seedreamApiKey == null) this.state.settings.seedreamApiKey = '';
+        if (!String(this.state.settings.seedreamBaseUrl || '').trim()) {
+            this.state.settings.seedreamBaseUrl = 'https://api.atlascloud.ai';
+        }
+        if (!String(this.state.settings.seedreamModel || '').trim()) {
+            this.state.settings.seedreamModel = 'bytedance/seedream-v5.0-pro/edit';
+        }
+        if (!String(this.state.settings.seedreamSize || '').trim()) {
+            this.state.settings.seedreamSize = '1024*1024';
+        }
+        if (this.state.settings.seedreamOutputFormat !== 'png') {
+            this.state.settings.seedreamOutputFormat = 'jpeg';
+        }
+        if (this.state.settings.seedreamThinking !== 'disabled') {
+            this.state.settings.seedreamThinking = 'enabled';
+        }
+        if (typeof this.state.settings.seedreamAutoFromAi !== 'boolean') {
+            this.state.settings.seedreamAutoFromAi = true;
         }
         this.save();
     }
@@ -309,9 +340,16 @@ export class MomoStore {
             .map((f) => {
                 const chat = this.state.chats[f.id] || { messages: [], updatedAt: f.addedAt || 0, unread: 0 };
                 const last = chat.messages[chat.messages.length - 1];
+                let lastMessage = '打个招呼吧';
+                if (last) {
+                    if (last.type === 'image' || last.imageUrl) lastMessage = '[图片]';
+                    else if (last.type === 'image_prompt' || last.imageGenStatus === 'loading') lastMessage = '[生图中]';
+                    else if (last.imageGenStatus === 'failed') lastMessage = '[生图失败]';
+                    else lastMessage = last.text || '打个招呼吧';
+                }
                 return {
                     friend: f,
-                    lastMessage: last?.text || '打个招呼吧',
+                    lastMessage,
                     updatedAt: chat.updatedAt || 0,
                     unread: chat.unread || 0,
                 };
@@ -351,6 +389,24 @@ export class MomoStore {
         if (msg.from === 'them') chat.unread = (chat.unread || 0) + 1;
         this.save();
         return msg;
+    }
+
+    /**
+     * Patch a message in a chat thread by id.
+     * @param {string} peerId
+     * @param {string} messageId
+     * @param {object} patch
+     */
+    updateMessage(peerId, messageId, patch) {
+        const chat = this.state.chats[peerId];
+        if (!chat?.messages?.length) return null;
+        const id = String(messageId || '');
+        const idx = chat.messages.findIndex((m) => String(m?.id || '') === id);
+        if (idx < 0) return null;
+        chat.messages[idx] = { ...chat.messages[idx], ...patch };
+        chat.updatedAt = getVirtualNow(this.getSettings());
+        this.save();
+        return chat.messages[idx];
     }
 
     /** Current virtual time (ms). */

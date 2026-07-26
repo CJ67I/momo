@@ -106,8 +106,8 @@ export function parseReplyBubbles(raw) {
         list = s
             .split(/[\n\r]+/)
             .map((line) => line.replace(/^\s*[-*]?\s*\d+[\.\)、]\s*/, '').trim())
-            .map((t) => cleanBubbleText(t))
-            .filter((t) => t.length >= 1 && !/^(回复|输出|json|\[)/i.test(t));
+            .map((t) => (/^\[\s*个人图片\s*\]/.test(t) ? t.trim() : cleanBubbleText(t)))
+            .filter((t) => t.length >= 1 && !/^(回复|输出|json)/i.test(t));
     }
 
     if (!list.length) {
@@ -123,7 +123,7 @@ export function parseReplyBubbles(raw) {
     }
 
     return list
-        .map((t) => t.slice(0, 80))
+        .map((t) => (/^\[\s*个人图片\s*\]/.test(t) ? t.slice(0, 200) : t.slice(0, 80)))
         .filter(Boolean)
         .slice(0, 6);
 }
@@ -154,6 +154,10 @@ function sanitizeNpcBubbles(bubbles, ids) {
         );
         if (claimsPlayer) continue;
         if (player && (t.startsWith(`${player}：`) || t.startsWith(`${player}:`))) continue;
+        if (/^\[\s*个人图片\s*\]/.test(t)) {
+            out.push(t.slice(0, 200));
+            continue;
+        }
         if (looksTruncated(t)) continue;
 
         out.push(t.slice(0, 80));
@@ -171,6 +175,13 @@ function formatMomoHistory(history, peerName, playerName) {
         .map((m) => {
             const isPlayer = m.from === 'me';
             const who = isPlayer ? `玩家「${playerName}」` : `你「${peerName}」`;
+            if (m.type === 'image' || m.imageUrl) {
+                const tip = String(m.imagePrompt || '').trim();
+                return `${who}: [图片]${tip ? `（${tip.slice(0, 40)}）` : ''}`;
+            }
+            if (m.type === 'image_prompt' || /^\[\s*个人图片\s*\]/.test(String(m.text || ''))) {
+                return `${who}: ${String(m.text || '[个人图片]').slice(0, 120)}`;
+            }
             return `${who}: ${cleanBubbleText(m.text)}`;
         })
         .filter((line) => !line.endsWith(': '))
@@ -182,7 +193,7 @@ function formatMomoHistory(history, peerName, playerName) {
  * @returns {Promise<string[]>}
  */
 export async function generateNpcReplies(opts) {
-    const { peer, history, userText, myProfile, useAi = true } = opts;
+    const { peer, history, userText, myProfile, useAi = true, allowPersonalImage = false } = opts;
 
     if (!useAi) {
         throw Object.assign(new Error('已关闭 AI 回复'), { code: 'ai_disabled' });
@@ -208,6 +219,11 @@ export async function generateNpcReplies(opts) {
         ).trim() || '旅人';
         const genderLabel = peer?.gender === 'female' ? '女' : '男';
         const momoHistoryText = formatMomoHistory(history, npcName, playerName);
+        const canSendSelfie = Boolean(
+            allowPersonalImage
+            && peer?.seedreamRefEnabled !== false
+            && String(peer?.seedreamRefUrl || peer?.referenceImage || '').trim(),
+        );
 
         const identityLock = [
             `你是陌陌用户「${npcName}」（${genderLabel}/${peer?.age ?? '?'}岁/${peer?.city || '未知'}）。`,
@@ -223,6 +239,9 @@ export async function generateNpcReplies(opts) {
             '禁止：过度彩虹屁、油腻搭讪、每句都用网络热词、整齐对仗的“金句”。',
             '先接住对方上一句再说自己的事；不要连续自我介绍或自我夸耀。',
             peer.speechStyle ? `个人口癖参考：${String(peer.speechStyle).slice(0, 80)}` : '',
+            canSendSelfie
+                ? '若对方明确要看你的照片/自拍/形象，可单独用一条输出：[个人图片]（简短画面描述，英文或中文均可，不超过40字）。不要滥发，每轮最多一条，且该条不要夹杂其他文字。'
+                : '',
         ].filter(Boolean);
 
         const systemPrompt = [
