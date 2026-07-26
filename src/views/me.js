@@ -1,6 +1,7 @@
 import { canUseTavernApi } from '../ai.js';
-import { getUserReferenceImage, prepareReferenceImage } from '../image-gen.js';
+import { compressImageToDataUrl, getUserReferenceImage, prepareReferenceImage } from '../image-gen.js';
 import { createNpcFromCharacter } from '../npc-factory.js';
+import { REF_GALLERY_MAX } from '../storage.js';
 import {
     getApiStatus,
     getCharacterAvatarUrl,
@@ -223,6 +224,34 @@ export class MeView {
                         若出图不像参考人，请确认好友已保存参考图，并把 Thinking 设为 disabled 后重试。
                     </p>
                     <button type="button" class="mm-btn mm-btn-block" data-action="seedream-save">保存 Seedream 设定</button>
+                </div>
+
+                <div class="mm-card mm-bridge-card">
+                    <h3>本地参考图库</h3>
+                    <p class="mm-muted" style="margin:0 0 8px;font-size:12px;line-height:1.5">
+                        上传到图库的图片会在<strong>加好友时随机匹配</strong>给对方作为 Seedream 参考图（聊天编辑页<strong>不展示</strong>）。
+                        若在好友编辑里手动上传，则覆盖自动匹配。最多 ${REF_GALLERY_MAX} 张。
+                    </p>
+                    <div class="mm-gallery-toolbar">
+                        <input type="file" id="mm-gallery-file" accept="image/png,image/jpeg,image/webp,image/gif,image/*" multiple hidden />
+                        <button type="button" class="mm-btn" id="mm-gallery-add">添加图片</button>
+                        <button type="button" class="mm-btn mm-btn-ghost" data-action="gallery-backfill">给无图好友补充分配</button>
+                    </div>
+                    <div class="mm-gallery-grid" id="mm-gallery-grid">
+                        ${(() => {
+                            const gallery = this.app.store.getRefGallery();
+                            if (!gallery.length) {
+                                return '<div class="mm-muted" style="padding:8px 0">图库为空，先添加几张人物图吧</div>';
+                            }
+                            return gallery.map((item) => `
+                                <div class="mm-gallery-item" data-gallery-id="${escapeHtml(item.id)}">
+                                    <div class="mm-gallery-thumb" style="background-image:url('${escapeHtml(item.dataUrl)}')"></div>
+                                    <button type="button" class="mm-gallery-del" data-action="gallery-del" data-id="${escapeHtml(item.id)}">删除</button>
+                                </div>
+                            `).join('');
+                        })()}
+                    </div>
+                    <p class="mm-muted" style="margin:8px 0 0;font-size:11px">当前 ${this.app.store.getRefGallery().length} / ${REF_GALLERY_MAX}</p>
                 </div>
 
                 <div class="mm-card mm-bridge-card">
@@ -543,6 +572,50 @@ export class MeView {
                         : '已启用，但尚未填写 API Key')
                     : '已关闭 Seedream 生图',
             );
+        });
+
+        const galleryFile = root.querySelector('#mm-gallery-file');
+        root.querySelector('#mm-gallery-add')?.addEventListener('click', () => galleryFile?.click());
+        galleryFile?.addEventListener('change', async () => {
+            const files = Array.from(galleryFile.files || []);
+            galleryFile.value = '';
+            if (!files.length) return;
+            let ok = 0;
+            let fail = 0;
+            for (const file of files) {
+                try {
+                    // eslint-disable-next-line no-await-in-loop
+                    const dataUrl = await compressImageToDataUrl(file, { maxSide: 960, quality: 0.82 });
+                    this.app.store.addRefGalleryImage({ dataUrl });
+                    ok += 1;
+                } catch (err) {
+                    console.warn('[st-momo] gallery add failed', err);
+                    fail += 1;
+                }
+            }
+            if (ok) toast(`已加入图库 ${ok} 张${fail ? `，失败 ${fail}` : ''}`, ok && !fail ? 'success' : 'warning');
+            else toast(fail ? '添加失败（可能已满或格式不对）' : '未添加', 'warning');
+            this.app.render('me');
+        });
+
+        root.querySelectorAll('[data-action="gallery-del"]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const id = btn.getAttribute('data-id');
+                if (!id) return;
+                if (!confirm('从本地图库删除这张图？\n已匹配给好友的副本仍会保留。')) return;
+                this.app.store.removeRefGalleryImage(id);
+                toast('已删除', 'warning');
+                this.app.render('me');
+            });
+        });
+
+        root.querySelector('[data-action="gallery-backfill"]')?.addEventListener('click', () => {
+            if (!this.app.store.getRefGallery().length) {
+                toast('图库为空，请先添加图片', 'warning');
+                return;
+            }
+            const n = this.app.store.backfillFriendsGalleryRefs();
+            toast(n ? `已为 ${n} 位好友补充分配隐藏参考图` : '没有需要补充的好友', n ? 'success' : 'info');
         });
 
         root.querySelector('#mm-wb-enabled')?.addEventListener('change', (e) => {

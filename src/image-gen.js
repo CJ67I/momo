@@ -141,17 +141,46 @@ export async function prepareReferenceImage(file, settings = {}) {
 
 /**
  * Resolve subject (friend or profile) reference image for Seedream `images`.
+ * Includes hidden gallery auto-matches (not shown in edit UI).
  * @param {object} subject
+ * @param {{ gallery?: Array<{ id: string, dataUrl: string }> }} [opts]
  */
-export function getPeerReferenceImage(subject) {
+export function getPeerReferenceImage(subject, opts = {}) {
     if (!subject) return '';
     if (subject.seedreamRefEnabled === false || subject.seedreamRefEnabled === 'false') return '';
-    return String(
+    const direct = String(
         subject.seedreamRefDataUrl
         || subject.seedreamRefUrl
         || subject.referenceImage
         || '',
     ).trim();
+    if (direct) return direct;
+
+    const gid = String(subject.seedreamGalleryId || '').trim();
+    if (gid && Array.isArray(opts.gallery)) {
+        const hit = opts.gallery.find((item) => String(item?.id || '') === gid);
+        return String(hit?.dataUrl || '').trim();
+    }
+    return '';
+}
+
+/** Manual upload shown in friend edit UI (ignore enabled flag for edit UI). */
+export function isManualSeedreamRef(subject) {
+    if (String(subject?.seedreamRefSource || '') !== 'manual') return false;
+    return Boolean(String(
+        subject?.seedreamRefDataUrl || subject?.seedreamRefUrl || '',
+    ).trim());
+}
+
+/** Auto gallery match — used for generate, hidden in friend edit UI. */
+export function isGallerySeedreamRef(subject) {
+    if (String(subject?.seedreamRefSource || '') !== 'gallery') return false;
+    return Boolean(String(
+        subject?.seedreamRefDataUrl
+        || subject?.seedreamRefUrl
+        || subject?.seedreamGalleryId
+        || '',
+    ).trim());
 }
 
 /** @param {object} profile */

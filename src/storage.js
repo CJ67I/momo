@@ -1,8 +1,9 @@
 import { getContextScope } from './scope.js';
 import { getVirtualNow, patchSetVirtualTime } from './time.js';
-import { normalizeGender, uid } from './utils.js';
+import { normalizeGender, pick, uid } from './utils.js';
 
 export const MODULE_NAME = 'st-momo';
+export const REF_GALLERY_MAX = 36;
 
 const DEFAULT_PROFILE = Object.freeze({
     id: 'me',
@@ -23,6 +24,8 @@ function emptyState() {
         posts: [],
         chats: {},
         matchHistory: [],
+        /** Local Seedream reference gallery: [{ id, dataUrl, createdAt }] */
+        refGallery: [],
         settings: {
             autoReply: true,
             useAiReply: true,
@@ -168,7 +171,108 @@ export class MomoStore {
         if (typeof this.state.settings.seedreamAutoFromAi !== 'boolean') {
             this.state.settings.seedreamAutoFromAi = true;
         }
+        if (!Array.isArray(this.state.refGallery)) {
+            this.state.refGallery = [];
+        }
+        this.state.refGallery = this.state.refGallery
+            .filter((item) => item && String(item.dataUrl || '').startsWith('data:image/'))
+            .map((item) => ({
+                id: String(item.id || uid('gref')),
+                dataUrl: String(item.dataUrl),
+                createdAt: Number(item.createdAt) || Date.now(),
+            }))
+            .slice(0, REF_GALLERY_MAX);
         this.save();
+    }
+
+    getRefGallery() {
+        return Array.isArray(this.state.refGallery) ? [...this.state.refGallery] : [];
+    }
+
+    /**
+     * @param {{ dataUrl: string }} item
+     */
+    addRefGalleryImage(item) {
+        const dataUrl = String(item?.dataUrl || '').trim();
+        if (!dataUrl.startsWith('data:image/')) {
+            throw new Error('图库仅支持本地图片 data URI');
+        }
+        if (!Array.isArray(this.state.refGallery)) this.state.refGallery = [];
+        if (this.state.refGallery.length >= REF_GALLERY_MAX) {
+            throw new Error(`图库最多 ${REF_GALLERY_MAX} 张，请先删除一些`);
+        }
+        const entry = {
+            id: uid('gref'),
+            dataUrl,
+            createdAt: Date.now(),
+        };
+        this.state.refGallery.unshift(entry);
+        this.save();
+        return entry;
+    }
+
+    removeRefGalleryImage(id) {
+        const key = String(id || '');
+        if (!key || !Array.isArray(this.state.refGallery)) return false;
+        const before = this.state.refGallery.length;
+        this.state.refGallery = this.state.refGallery.filter((item) => item.id !== key);
+        if (this.state.refGallery.length === before) return false;
+        this.save();
+        return true;
+    }
+
+    /**
+     * Build a friend ref patch from a random gallery image (hidden auto-match).
+     * @returns {object|null}
+     */
+    buildRandomGalleryRefPatch() {
+        const list = this.getRefGallery();
+        if (!list.length) return null;
+        const item = pick(list);
+        if (!item?.dataUrl) return null;
+        return {
+            seedreamRefSource: 'gallery',
+            seedreamGalleryId: item.id,
+            seedreamRefDataUrl: item.dataUrl,
+            seedreamRefUrl: '',
+            seedreamRefEnabled: true,
+        };
+    }
+
+    /**
+     * Assign gallery ref if friend has no manual/gallery ref yet.
+     * @param {object} user
+     * @returns {object} user with possible gallery fields
+     */
+    applyGalleryRefIfNeeded(user) {
+        if (!user?.id) return user;
+        const source = String(user.seedreamRefSource || '').trim();
+        if (source === 'manual' || source === 'gallery') return user;
+        const hasManualLike = Boolean(
+            String(user.seedreamRefDataUrl || user.seedreamRefUrl || '').trim(),
+        );
+        if (hasManualLike && source !== 'gallery') {
+            // Legacy uploaded ref without source flag → treat as manual
+            return { ...user, seedreamRefSource: 'manual', seedreamRefEnabled: user.seedreamRefEnabled !== false };
+        }
+        const patch = this.buildRandomGalleryRefPatch();
+        return patch ? { ...user, ...patch } : user;
+    }
+
+    /**
+     * Backfill gallery refs for friends that still have none.
+     * @returns {number} count updated
+     */
+    backfillFriendsGalleryRefs() {
+        let n = 0;
+        this.state.friends = this.state.friends.map((f) => {
+            const before = String(f.seedreamRefSource || '');
+            const next = this.applyGalleryRefIfNeeded(f);
+            if (String(next.seedreamRefSource || '') === 'gallery' && before !== 'gallery') n += 1;
+            return next;
+        });
+        if (n) this.save();
+        return n;
     }
 
     save() {
@@ -268,12 +372,13 @@ export class MomoStore {
         if (!user?.id) return null;
         if (this.state.friends.some((f) => f.id === user.id)) return user;
         const now = getVirtualNow(this.getSettings());
+        const withGallery = this.applyGalleryRefIfNeeded(user);
         const friend = {
-            ...user,
+            ...withGallery,
             isFriend: true,
             addedAt: now,
             lastProactiveAt: now,
-            personaReady: Boolean(user.personaReady),
+            personaReady: Boolean(withGallery.personaReady),
         };
         this.state.friends.unshift(friend);
         this.state.strangers = this.state.strangers.filter((s) => s.id !== user.id);

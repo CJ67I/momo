@@ -910,6 +910,50 @@ body.st-momo-scroll-lock {
     gap: 6px;
 }
 
+.mm-gallery-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.mm-gallery-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+}
+
+.mm-gallery-item {
+    position: relative;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--mm-line);
+    background: #fff;
+}
+
+.mm-gallery-thumb {
+    aspect-ratio: 1;
+    background: #f3eef0 center/cover no-repeat;
+}
+
+.mm-gallery-del {
+    position: absolute;
+    right: 4px;
+    bottom: 4px;
+    border: 0;
+    border-radius: 999px;
+    padding: 3px 8px;
+    font-size: 11px;
+    line-height: 1.2;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.55);
+    cursor: pointer;
+}
+
+.mm-gallery-del:active {
+    background: rgba(255, 80, 120, 0.85);
+}
+
 .mm-composer {
     display: flex;
     gap: 8px;

@@ -4,6 +4,8 @@ import {
     fulfillImagePromptMessage,
     getPeerReferenceImage,
     getUserReferenceImage,
+    isGallerySeedreamRef,
+    isManualSeedreamRef,
     isSeedreamConfigured,
     prepareReferenceImage,
     tryHandlePersonalImageBubble,
@@ -430,16 +432,21 @@ export class ChatView {
 
         const hasPersona = Boolean(String(friend.persona || '').trim() && String(friend.speechStyle || '').trim());
         const tags = Array.isArray(friend.tags) ? friend.tags.join('、') : '';
-        const refUrl = String(friend.seedreamRefUrl || friend.referenceImage || '').trim();
-        const refDataUrl = String(friend.seedreamRefDataUrl || '').trim();
-        const previewUrl = /^data:image\//i.test(refDataUrl) ? refDataUrl : refUrl;
-        const refEnabled = Boolean(refUrl || refDataUrl)
+        const galleryHidden = isGallerySeedreamRef(friend);
+        const manualRef = isManualSeedreamRef(friend);
+        const refUrl = manualRef ? String(friend.seedreamRefUrl || '').trim() : '';
+        const refDataUrl = manualRef ? String(friend.seedreamRefDataUrl || '').trim() : '';
+        const previewUrl = manualRef
+            ? (/^data:image\//i.test(refDataUrl) ? refDataUrl : refUrl)
+            : '';
+        const refEnabled = Boolean(getPeerReferenceImage(friend))
             && friend.seedreamRefEnabled !== false
             && friend.seedreamRefEnabled !== 'false';
         const promptTags = String(friend.seedreamPromptTags || friend.imageTags || '').trim();
         /** Keep large data URIs out of HTML attributes (truncation risk). */
         let pendingRefUrl = refUrl;
         let pendingRefDataUrl = refDataUrl;
+        let refDirty = false;
         const host = this._overlayHost();
         const wrap = document.createElement('div');
         wrap.id = 'mm-friend-overlay';
@@ -457,17 +464,20 @@ export class ChatView {
                             <span>个人形象参考图（Seedream）</span>
                         </div>
                         <p class="mm-muted" style="margin:0;font-size:11px;line-height:1.45">
-                            上传后会按 <b>编辑图1 / 保持同一人</b> 调用 Seedream。AI 回复 <b>[个人图片]（描述）</b> 或点聊天「图」触发生图。
+                            手动上传会覆盖图库自动匹配，并按 <b>编辑图1</b> 生图。图库匹配的参考图<strong>不会在此展示</strong>。
+                        </p>
+                        <p class="mm-muted" id="mm-ref-gallery-hint" style="margin:0;font-size:11px;${galleryHidden && !manualRef ? '' : 'display:none'}">
+                            当前：图库自动匹配（已隐藏，可点「图」生图）
                         </p>
                         <div class="mm-ref-row">
                             <div class="mm-ref-preview" id="mm-ref-preview">${previewUrl ? '' : '无'}</div>
                             <div class="mm-ref-actions">
                                 <input type="file" id="mm-ref-file" accept="image/png,image/jpeg,image/webp,image/gif,image/*" hidden />
                                 <button type="button" class="mm-btn mm-btn-ghost" id="mm-ref-upload">${previewUrl ? '替换参考图' : '上传参考图'}</button>
-                                <button type="button" class="mm-btn mm-btn-ghost" id="mm-ref-clear" ${previewUrl ? '' : 'disabled'}>清除</button>
+                                <button type="button" class="mm-btn mm-btn-ghost" id="mm-ref-clear" ${previewUrl || galleryHidden ? '' : 'disabled'}>清除/重配</button>
                                 <label class="mm-switch" style="margin-top:6px">
                                     <span>启用参考图</span>
-                                    <input type="checkbox" name="seedreamRefEnabled" ${refEnabled ? 'checked' : ''} ${previewUrl ? '' : 'disabled'} />
+                                    <input type="checkbox" name="seedreamRefEnabled" ${refEnabled ? 'checked' : ''} ${previewUrl || galleryHidden ? '' : 'disabled'} />
                                 </label>
                             </div>
                         </div>
@@ -504,11 +514,13 @@ export class ChatView {
         const refFile = wrap.querySelector('#mm-ref-file');
         const refUploadBtn = wrap.querySelector('#mm-ref-upload');
         const refClearBtn = wrap.querySelector('#mm-ref-clear');
+        const galleryHint = wrap.querySelector('#mm-ref-gallery-hint');
 
-        const paintRefPreview = (url, dataUrl = '') => {
+        const paintRefPreview = (url, dataUrl = '', { dirty = true } = {}) => {
             const preview = String(dataUrl || url || '').trim();
             pendingRefUrl = String(url || '').trim();
             pendingRefDataUrl = String(dataUrl || '').trim();
+            if (dirty) refDirty = true;
             if (refPreview) {
                 if (preview) {
                     refPreview.style.backgroundImage = `url("${preview.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}")`;
@@ -518,20 +530,24 @@ export class ChatView {
                     refPreview.textContent = '无';
                 }
             }
-            if (refClearBtn) refClearBtn.disabled = !preview;
+            if (galleryHint) {
+                galleryHint.style.display = (!preview && galleryHidden && !refDirty) ? '' : 'none';
+            }
+            if (refClearBtn) refClearBtn.disabled = !(preview || (galleryHidden && !refDirty));
             if (refEnabledEl) {
-                refEnabledEl.disabled = !preview;
-                if (!preview) refEnabledEl.checked = false;
+                const canEnable = Boolean(preview || (galleryHidden && !refDirty));
+                refEnabledEl.disabled = !canEnable;
+                if (!canEnable) refEnabledEl.checked = false;
                 else if (!refEnabledEl.checked) refEnabledEl.checked = true;
             }
             if (refUploadBtn) refUploadBtn.textContent = preview ? '替换参考图' : '上传参考图';
         };
 
-        // Initial paint via JS (avoid stuffing huge data URI into HTML attributes)
-        paintRefPreview(pendingRefUrl, pendingRefDataUrl);
+        // Only show manual uploads; gallery matches stay hidden
+        paintRefPreview(pendingRefUrl, pendingRefDataUrl, { dirty: false });
 
         refUploadBtn?.addEventListener('click', () => refFile?.click());
-        refClearBtn?.addEventListener('click', () => paintRefPreview('', ''));
+        refClearBtn?.addEventListener('click', () => paintRefPreview('', '', { dirty: true }));
         refFile?.addEventListener('change', async () => {
             const file = refFile.files?.[0];
             refFile.value = '';
@@ -539,11 +555,11 @@ export class ChatView {
             try {
                 toast('正在处理参考图…', 'info');
                 const prepared = await prepareReferenceImage(file, this.app.store.getSettings());
-                paintRefPreview(prepared.url, prepared.dataUrl || '');
+                paintRefPreview(prepared.url, prepared.dataUrl || '', { dirty: true });
                 if (prepared.storedAs === 'data' && prepared.uploadError) {
                     toast('已用本地图（云端上传失败，仍可生图）', 'warning');
                 } else {
-                    toast('参考图已就绪', 'success');
+                    toast('已覆盖为手动参考图', 'success');
                 }
             } catch (err) {
                 console.warn('[st-momo] ref upload failed', err);
@@ -612,13 +628,8 @@ export class ChatView {
                 .map((t) => t.trim())
                 .filter(Boolean)
                 .slice(0, 6);
-            const seedreamRefUrl = String(pendingRefUrl || '').trim();
-            const seedreamRefDataUrl = String(pendingRefDataUrl || '').trim();
             const seedreamPromptTags = String(fd.get('seedreamPromptTags') || '').trim().slice(0, 200);
-            const hasRef = Boolean(seedreamRefUrl || seedreamRefDataUrl);
-            const seedreamRefEnabled = hasRef && Boolean(form.querySelector('[name="seedreamRefEnabled"]')?.checked);
-
-            this.app.store.updateUser({
+            const patch = {
                 id,
                 nickname,
                 bio,
@@ -627,11 +638,42 @@ export class ChatView {
                 tags: tagList,
                 avatarText: nickname.replace(/[^\u4e00-\u9fa5A-Za-z0-9]/g, '').slice(0, 1) || friend.avatarText || '·',
                 personaReady: true,
-                seedreamRefUrl,
-                seedreamRefDataUrl,
-                seedreamRefEnabled,
                 seedreamPromptTags,
-            });
+            };
+
+            if (refDirty) {
+                const seedreamRefUrl = String(pendingRefUrl || '').trim();
+                const seedreamRefDataUrl = String(pendingRefDataUrl || '').trim();
+                if (seedreamRefUrl || seedreamRefDataUrl) {
+                    Object.assign(patch, {
+                        seedreamRefSource: 'manual',
+                        seedreamGalleryId: '',
+                        seedreamRefUrl,
+                        seedreamRefDataUrl,
+                        seedreamRefEnabled: Boolean(form.querySelector('[name="seedreamRefEnabled"]')?.checked),
+                    });
+                } else {
+                    // Cleared: re-roll from gallery if possible, else wipe
+                    const auto = this.app.store.buildRandomGalleryRefPatch();
+                    if (auto) {
+                        Object.assign(patch, auto);
+                        toast('已重新从图库匹配参考图（隐藏）', 'info');
+                    } else {
+                        Object.assign(patch, {
+                            seedreamRefSource: '',
+                            seedreamGalleryId: '',
+                            seedreamRefUrl: '',
+                            seedreamRefDataUrl: '',
+                            seedreamRefEnabled: false,
+                        });
+                    }
+                }
+            } else if (galleryHidden) {
+                // Keep hidden gallery match; only sync enabled checkbox
+                patch.seedreamRefEnabled = Boolean(form.querySelector('[name="seedreamRefEnabled"]')?.checked);
+            }
+
+            this.app.store.updateUser(patch);
             this._syncInterop();
             this._closeOverlay();
             toast('好友资料已更新', 'success');
